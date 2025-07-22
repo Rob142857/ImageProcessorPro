@@ -1,0 +1,19 @@
+input_folder: C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_Personal/_Activities/MJW/Scanning
+  done with Joe 13.12.24
+jpeg_quality: 40
+max_height: 1080
+max_width: 1920
+max_workers: 4
+output_folder: C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_Personal/_Activities/MJW/output_test_01
+  13.12.24
+output_format: WEBP
+pdf_dpi: 200
+png_compression: 6
+preserve_aspect_ratio: true
+use_multiprocessing: true
+watermark_opacity: 0.3
+watermark_path: C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_RME Solutions
+  Internal/Art/logo ideas/1.png
+watermark_position: bottom-right
+watermark_scale: 0.2
+webp_quality: 40

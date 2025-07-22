@@ -1,0 +1,36 @@
+# Default processing configuration for Image Processor
+# Copy this file to 'settings.yaml' and customize as needed
+
+# Input/Output Settings
+input_folder: "input"
+output_folder: "output"
+watermark_path: "watermarks/watermark.png"
+
+# Image Quality Settings
+jpeg_quality: 85          # Quality for JPEG output (1-100)
+png_compression: 6        # PNG compression level (0-9)
+webp_quality: 85          # Quality for WEBP output (1-100)
+
+# Watermark Settings
+watermark_opacity: 0.3    # Opacity of watermark (0.1-1.0)
+watermark_position: "bottom-right"  # Options: center, top-left, top-right, bottom-left, bottom-right
+watermark_scale: 0.2      # Scale relative to image size (0.05-0.5)
+
+# Tiled Watermark Settings (NEW - better protection)
+use_tiled_watermark: true      # Use tiled pattern instead of single watermark
+tile_size_ratio: 0.18          # Size of each tile relative to image width
+tile_spacing_ratio: 1.6        # Spacing between tiles (multiplier of tile size)
+tile_opacity_reduction: 0.7    # Reduce opacity for tiled watermarks
+
+# Processing Settings
+max_width: 1920           # Maximum output width in pixels
+max_height: 1080          # Maximum output height in pixels
+output_format: "JPEG"     # Output format: JPEG, PNG, WEBP
+preserve_aspect_ratio: true  # Maintain original aspect ratio
+
+# Performance Settings
+use_multiprocessing: true # Enable multiprocessing for batch operations
+max_workers: null         # Number of worker processes (null = auto-detect)
+
+# PDF Settings
+pdf_dpi: 200             # DPI for PDF to image conversion

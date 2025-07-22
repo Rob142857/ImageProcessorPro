@@ -1,0 +1,35 @@
+# Fast web optimization for social media and web use
+# Optimized for speed and smaller file sizes
+
+input_folder: "input"
+output_folder: "output/web_optimized"
+watermark_path: "watermarks/watermark.png"
+
+# Web-optimized quality
+jpeg_quality: 75
+png_compression: 6
+webp_quality: 80
+
+# Standard watermark
+watermark_opacity: 0.4
+watermark_position: "bottom-right"
+watermark_scale: 0.25
+
+# Tiled watermark settings (NEW - provides better protection)
+use_tiled_watermark: true
+tile_size_ratio: 0.15        # Smaller tiles for web images
+tile_spacing_ratio: 1.8      # More spacing for better readability
+tile_opacity_reduction: 0.6  # More subtle for web use
+
+# Web-friendly dimensions
+max_width: 1280
+max_height: 720
+output_format: "WEBP"  # Best compression for web
+preserve_aspect_ratio: true
+
+# Maximum performance
+use_multiprocessing: true
+max_workers: 8
+
+# Standard PDF quality
+pdf_dpi: 150

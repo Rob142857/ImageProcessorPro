@@ -1,0 +1,35 @@
+# High-quality processing for print-ready images
+# Use this for images that need higher quality but still web-optimized
+
+input_folder: "input"
+output_folder: "output/high_quality"
+watermark_path: "watermarks/watermark.png"
+
+# Higher quality settings
+jpeg_quality: 95
+png_compression: 3
+webp_quality: 95
+
+# Subtle watermark
+watermark_opacity: 0.2
+watermark_position: "bottom-right"
+watermark_scale: 0.15
+
+# Tiled watermark settings for high-quality images
+use_tiled_watermark: true
+tile_size_ratio: 0.12        # Smaller, more subtle tiles for high-quality
+tile_spacing_ratio: 2.0      # More spacing for elegance
+tile_opacity_reduction: 0.8  # Very subtle for high-quality images
+
+# Larger dimensions
+max_width: 2560
+max_height: 1440
+output_format: "PNG"
+preserve_aspect_ratio: true
+
+# Performance
+use_multiprocessing: true
+max_workers: null
+
+# High DPI for PDFs
+pdf_dpi: 300
