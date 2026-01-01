@@ -1,19 +1,47 @@
-input_folder: C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_Personal/_Activities/MJW/Scanning
-  done with Joe 13.12.24
-jpeg_quality: 40
+convert_to_srgb: true
+create_subfolder: true
+input_folder: C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_Personal/Michael
+  W Folio 1 - Copy
+jpeg_quality: 100
+long_edge_pixels: 2400
 max_height: 1080
 max_width: 1920
 max_workers: 4
-output_folder: C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_Personal/_Activities/MJW/output_test_01
-  13.12.24
-output_format: WEBP
+output_dpi: 300
+output_folder: C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_Personal/Michael
+  W Folio 1 - Copy
+output_format: JPEG
 pdf_dpi: 200
 png_compression: 6
 preserve_aspect_ratio: true
+preserve_metadata: true
+subfolder_name: web_optimized
+target_max_size_kb: 5000
+text_font_size_ratio: 0.015
+text_outline_color: !!python/tuple
+- 0
+- 0
+- 0
+- 0
+text_outline_width: 0
+text_rotation_angle: -30
+text_spacing_ratio: -0.3
+text_watermark_color: !!python/tuple
+- 128
+- 128
+- 128
+text_watermark_opacity: 63
+tile_opacity_reduction: 0.7
+tile_size_ratio: 0.18
+tile_spacing_ratio: 1.6
 use_multiprocessing: true
-watermark_opacity: 0.3
-watermark_path: C:/Users/RobertEvans/OneDrive - RME Solutions Technology/_RME Solutions
-  Internal/Art/logo ideas/1.png
-watermark_position: bottom-right
+use_text_outline: false
+use_text_watermark: true
+use_tiled_watermark: true
+watermark_opacity: 0.1
+watermark_path: ''
+watermark_position: center
 watermark_scale: 0.2
-webp_quality: 40
+watermark_text: Michael J Wright Estate | All Rights Reserved
+web_output_suffix: _web
+webp_quality: 100

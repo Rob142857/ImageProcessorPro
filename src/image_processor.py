@@ -57,10 +57,11 @@ class ProcessingConfig:
     watermark_path: str = ""
     
     # Image quality settings
-    jpeg_quality: int = 77  # 75-80% for web optimization
+    jpeg_quality: int = 100  # Maximum quality - crisp watermark is priority
     png_compression: int = 6
-    webp_quality: int = 85
-    target_max_size_kb: int = 300  # Target max file size in KB
+    webp_quality: int = 100
+    target_max_size_kb: int = 5000  # No real limit - quality is priority
+    preserve_metadata: bool = True  # Preserve EXIF and other metadata from original
     
     # Watermark settings
     watermark_opacity: float = 0.3
@@ -75,15 +76,19 @@ class ProcessingConfig:
     
     # Text watermark settings (for Michael J Wright Estate)
     use_text_watermark: bool = True  # Use text-based watermark instead of image
-    watermark_text: str = "© Michael J Wright Estate - Property of"
-    text_font_size_ratio: float = 0.025  # Font size relative to image width
-    text_watermark_opacity: int = 25  # Very light opacity (0-255, ~10% = 25)
+    watermark_text: str = "Michael J Wright Estate | All Rights Reserved"
+    text_font_size_ratio: float = 0.015  # Small font (~36px on 2400px)
+    text_watermark_opacity: int = 63  # Grey at ~25% opacity
+    text_watermark_color: tuple = (128, 128, 128)  # Medium grey - visible on light and dark
     text_rotation_angle: int = -30  # Diagonal rotation angle
-    text_spacing_ratio: float = 1.8  # Spacing between text rows/columns
+    text_spacing_ratio: float = -0.3  # Overlap tiles for denser coverage (negative = overlap)
+    use_text_outline: bool = False  # No outline - clean single color
+    text_outline_width: int = 0  # No outline
+    text_outline_color: tuple = (0, 0, 0, 0)  # Disabled
     
     # Web optimization settings
-    long_edge_pixels: int = 1200  # Resize to this on long edge
-    output_dpi: int = 72  # DPI for web images
+    long_edge_pixels: int = 2400  # Resize to this on long edge (larger for legible watermark)
+    output_dpi: int = 300  # High DPI for crisp text
     convert_to_srgb: bool = True  # Convert to sRGB color space
     web_output_suffix: str = "_web"  # Suffix for output files
     create_subfolder: bool = True  # Create output subfolder in source folder
@@ -96,7 +101,7 @@ class ProcessingConfig:
     preserve_aspect_ratio: bool = True
     
     # Performance settings
-    use_multiprocessing: bool = True
+    use_multiprocessing: bool = False  # Disabled - causes issues with PyInstaller GUI
     max_workers: Optional[int] = None
     
     # PDF settings
@@ -159,11 +164,11 @@ class ImageProcessor:
             
             # Try to load a font, fall back to default
             try:
-                # Try common Windows fonts first
+                # Try modern crisp fonts first (Segoe UI is clean and modern)
                 font_paths = [
-                    "C:/Windows/Fonts/arial.ttf",
-                    "C:/Windows/Fonts/calibri.ttf",
-                    "C:/Windows/Fonts/segoeui.ttf",
+                    "C:/Windows/Fonts/segoeui.ttf",  # Modern Windows font - crisp and clean
+                    "C:/Windows/Fonts/calibri.ttf",  # Clean sans-serif
+                    "C:/Windows/Fonts/arial.ttf",    # Fallback
                     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                     "/System/Library/Fonts/Helvetica.ttc",
                 ]
@@ -171,6 +176,7 @@ class ImageProcessor:
                 for font_path in font_paths:
                     if os.path.exists(font_path):
                         font = ImageFont.truetype(font_path, font_size)
+                        logger.debug(f"Using font: {font_path}")
                         break
                 if font is None:
                     font = ImageFont.load_default()
@@ -181,21 +187,44 @@ class ImageProcessor:
             temp_img = Image.new('RGBA', (1, 1), (0, 0, 0, 0))
             temp_draw = ImageDraw.Draw(temp_img)
             
-            # Get text bounding box
-            text = self.config.watermark_text
+            # Get text bounding box - prepend hardcoded copyright symbol
+            text = "\u00A9 " + self.config.watermark_text
             bbox = temp_draw.textbbox((0, 0), text, font=font)
             text_width = bbox[2] - bbox[0]
             text_height = bbox[3] - bbox[1]
             
             # Create watermark overlay for single text block (will be rotated)
-            # Make it bigger to account for rotation
-            padding = 50
+            # Make it bigger to account for rotation and outline
+            padding = 80
             single_text_img = Image.new('RGBA', (text_width + padding * 2, text_height + padding * 2), (0, 0, 0, 0))
             draw = ImageDraw.Draw(single_text_img)
             
-            # Draw text in white with low opacity
+            # Get opacity and color settings
             opacity = self.config.text_watermark_opacity
-            draw.text((padding, padding), text, font=font, fill=(255, 255, 255, opacity))
+            
+            # Get watermark color (default to grey if not set)
+            text_color = getattr(self.config, 'text_watermark_color', (128, 128, 128))
+            if isinstance(text_color, list):
+                text_color = tuple(text_color)
+            # Add opacity as alpha channel
+            fill_color = (*text_color[:3], opacity)
+            
+            # Draw text with outline for visibility on any background (if enabled)
+            if self.config.use_text_outline and self.config.text_outline_width > 0:
+                outline_width = self.config.text_outline_width
+                outline_color = self.config.text_outline_color
+                # Convert list to tuple if needed (for YAML compatibility)
+                if isinstance(outline_color, list):
+                    outline_color = tuple(outline_color)
+                
+                # Draw outline by rendering text multiple times offset in all directions
+                for dx in range(-outline_width, outline_width + 1):
+                    for dy in range(-outline_width, outline_width + 1):
+                        if dx != 0 or dy != 0:  # Skip center position
+                            draw.text((padding + dx, padding + dy), text, font=font, fill=outline_color)
+            
+            # Draw main text (grey or configured color)
+            draw.text((padding, padding), text, font=font, fill=fill_color)
             
             # Rotate the text block
             rotated_text = single_text_img.rotate(
@@ -208,8 +237,12 @@ class ImageProcessor:
             rotated_width, rotated_height = rotated_text.size
             
             # Calculate spacing between watermarks
-            spacing_x = int(rotated_width * self.config.text_spacing_ratio)
-            spacing_y = int(rotated_height * self.config.text_spacing_ratio)
+            # spacing_ratio is the GAP between tiles as a fraction of tile size
+            # Total step = tile size + gap
+            gap_x = int(rotated_width * self.config.text_spacing_ratio)
+            gap_y = int(rotated_height * self.config.text_spacing_ratio)
+            spacing_x = rotated_width + gap_x
+            spacing_y = rotated_height + gap_y
             
             # Create the full overlay
             overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
@@ -224,7 +257,7 @@ class ImageProcessor:
             row = 0
             while y < img_height + rotated_height:
                 x = start_x
-                # Offset every other row for better coverage
+                # Offset every other row for diagonal pattern
                 if row % 2 == 1:
                     x += spacing_x // 2
                 
@@ -437,9 +470,10 @@ class ImageProcessor:
                 for i, image in enumerate(images):
                     page_output_path = output_dir / f"{base_name}_page_{i+1:03d}.{self.config.output_format.lower()}"
                     
-                    # Apply processing
-                    processed_image = self.apply_watermark(image)
-                    processed_image = self.resize_for_web(processed_image)
+                    # Apply processing - resize FIRST, then watermark
+                    # This ensures watermark text is correctly sized for the final output
+                    processed_image = self.resize_for_web(image)
+                    processed_image = self.apply_watermark(processed_image)
                     
                     # Convert to RGB if saving as JPEG
                     if self.config.output_format.upper() == 'JPEG' and processed_image.mode == 'RGBA':
@@ -453,18 +487,57 @@ class ImageProcessor:
             else:
                 # Process regular image
                 with Image.open(input_path) as image:
-                    # Apply watermark
-                    processed_image = self.apply_watermark(image)
+                    # Extract comprehensive metadata from original
+                    orig_format = image.format or Path(input_path).suffix.upper().replace('.', '')
+                    orig_mode = image.mode
+                    orig_size = image.size
                     
-                    # Resize for web
-                    processed_image = self.resize_for_web(processed_image)
+                    # Extract EXIF data if available
+                    orig_exif = None
+                    try:
+                        orig_exif = image.getexif()
+                        if orig_exif:
+                            logger.info(f"Original EXIF tags: {len(orig_exif)} entries")
+                    except Exception:
+                        pass
+                    
+                    # Extract ICC color profile
+                    orig_icc_profile = image.info.get('icc_profile')
+                    if orig_icc_profile:
+                        logger.info(f"Original ICC profile: {len(orig_icc_profile)} bytes")
+                    
+                    # Extract other metadata
+                    orig_dpi = image.info.get('dpi', (72, 72))
+                    orig_info = {k: v for k, v in image.info.items() if k not in ('exif', 'icc_profile')}
+                    
+                    logger.info(f"Original: {orig_size[0]}x{orig_size[1]} {orig_format} ({orig_mode})")
+                    logger.info(f"Original DPI: {orig_dpi}, Info keys: {list(orig_info.keys())}")
+                    
+                    # Store metadata for later use in save
+                    self._current_orig_exif = orig_exif
+                    self._current_orig_icc = orig_icc_profile
+                    
+                    # Keep as much original quality as possible during processing
+                    # Work in RGB/RGBA to avoid multiple conversions
+                    if image.mode not in ('RGB', 'RGBA'):
+                        image = image.convert('RGB')
+                    
+                    # Resize for web FIRST (uses LANCZOS for best quality)
+                    processed_image = self.resize_for_web(image)
+                    
+                    # Apply watermark AFTER resize (so text is correctly sized)
+                    processed_image = self.apply_watermark(processed_image)
                     
                     # Convert to RGB if saving as JPEG
                     if self.config.output_format.upper() == 'JPEG' and processed_image.mode == 'RGBA':
                         processed_image = processed_image.convert('RGB')
                     
-                    # Save optimized image
+                    # Save optimized image (with preserved metadata)
                     self.save_optimized_image(processed_image, output_path)
+                    
+                    # Clear stored metadata
+                    self._current_orig_exif = None
+                    self._current_orig_icc = None
                     
                     return True
                     
@@ -556,47 +629,89 @@ class ImageProcessor:
             return image
     
     def _save_jpeg_optimized(self, image: Image.Image, output_path: str, dpi: tuple) -> Image.Image:
-        """Save JPEG with optimization to target file size.
+        """Save JPEG with maximum quality for crisp watermark text.
         
-        Starts at configured quality (77%) and reduces if needed to stay under 300KB.
+        Uses 4:4:4 subsampling to preserve watermark text sharpness.
+        Preserves EXIF metadata from original if available.
         """
         target_size_kb = self.config.target_max_size_kb
         quality = self.config.jpeg_quality
-        min_quality = 60  # Don't go below this
+        min_quality = 85  # Higher minimum - quality is priority
+        
+        # Use 4:4:4 subsampling (no chroma subsampling) to keep text sharp
+        # This preserves fine detail like watermark text better than default 4:2:0
+        subsampling = 0  # 0 = 4:4:4, 1 = 4:2:2, 2 = 4:2:0
+        
+        # Build save parameters
+        save_params = {
+            'quality': quality,
+            'optimize': True,
+            'dpi': dpi,
+            'subsampling': subsampling
+        }
+        
+        # Preserve EXIF metadata if configured and available
+        if self.config.preserve_metadata:
+            orig_exif = getattr(self, '_current_orig_exif', None)
+            if orig_exif:
+                save_params['exif'] = orig_exif
+                logger.info("Preserving original EXIF metadata")
         
         # First attempt at configured quality
         buffer = io.BytesIO()
-        image.save(buffer, 'JPEG', quality=quality, optimize=True, dpi=dpi)
+        image.save(buffer, 'JPEG', **save_params)
         size_kb = buffer.tell() / 1024
         
-        # If already under target, save directly
+        # If already under target, save directly (likely with 100% quality)
         if size_kb <= target_size_kb:
-            image.save(output_path, 'JPEG', quality=quality, optimize=True, dpi=dpi)
+            image.save(output_path, 'JPEG', **save_params)
             logger.info(f"Saved {output_path}: {size_kb:.1f}KB at quality {quality}")
             return image
         
-        # Otherwise, reduce quality until we hit target
+        # Otherwise, reduce quality until we hit target (rarely needed at 5MB limit)
         while size_kb > target_size_kb and quality > min_quality:
             quality -= 3
+            save_params['quality'] = quality
             buffer = io.BytesIO()
-            image.save(buffer, 'JPEG', quality=quality, optimize=True, dpi=dpi)
+            image.save(buffer, 'JPEG', **save_params)
             size_kb = buffer.tell() / 1024
         
         # Save with final quality
-        image.save(output_path, 'JPEG', quality=quality, optimize=True, dpi=dpi)
+        image.save(output_path, 'JPEG', **save_params)
         logger.info(f"Saved {output_path}: {size_kb:.1f}KB at quality {quality}")
         
         return image
     
     def get_image_files(self, folder_path: str) -> List[str]:
-        """Get all supported image files from folder."""
+        """Get all supported image files from folder.
+        
+        Excludes:
+        - Files in the output subfolder (web_optimized) to prevent reprocessing
+        - Files with the web output suffix (e.g., _web.jpg) 
+        """
         image_files = []
         
+        # Get the output subfolder name to exclude
+        output_subfolder = self.config.subfolder_name.lower() if self.config.subfolder_name else "web_optimized"
+        web_suffix = self.config.web_output_suffix.lower() if self.config.web_output_suffix else "_web"
+        
         for root, dirs, files in os.walk(folder_path):
+            # Skip output subfolders to prevent reprocessing
+            # Modify dirs in-place to prevent os.walk from descending into them
+            dirs[:] = [d for d in dirs if d.lower() != output_subfolder]
+            
             for file in files:
+                file_lower = file.lower()
+                file_stem = Path(file).stem.lower()
+                
+                # Skip files that have already been processed (have web suffix)
+                if web_suffix and file_stem.endswith(web_suffix):
+                    continue
+                    
                 if Path(file).suffix.lower() in self.supported_formats:
                     image_files.append(os.path.join(root, file))
         
+        logger.info(f"Found {len(image_files)} original images (excluded output folder '{output_subfolder}')")
         return sorted(image_files)
     
     def process_folder(self, progress_callback=None) -> Dict[str, Any]:
@@ -632,7 +747,12 @@ class ImageProcessor:
                 results["failed"] += 1
             
             if progress_callback:
-                progress_callback(i + 1, len(input_files))
+                # progress_callback returns False to signal stop
+                should_continue = progress_callback(i + 1, len(input_files))
+                if should_continue is False:
+                    logger.info("Processing stopped by user")
+                    results["stopped"] = True
+                    break
         
         return results
     
@@ -710,7 +830,7 @@ if __name__ == "__main__":
         output_folder="output",
         # Text watermark settings
         use_text_watermark=True,
-        watermark_text="© Michael J Wright Estate - Property of",
+        watermark_text="Michael J Wright Estate | All Rights Reserved",
         text_watermark_opacity=25,  # Very light - visible at zoom, not at full view
         text_rotation_angle=-30,
         text_spacing_ratio=1.8,

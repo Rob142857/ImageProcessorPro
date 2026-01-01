@@ -6,10 +6,9 @@ A user-friendly interface for the automated image processing system.
 Built with CustomTkinter for a modern appearance.
 
 Optimized for Michael J Wright Estate web image processing:
-- Resize to 1200px long edge
-- sRGB color space, 72 DPI
-- JPEG at 75-80% quality (< 300KB)
-- Text watermark: "© Michael J Wright Estate - Property of"
+- Resize to 2400px long edge
+- sRGB color space, 300 DPI, 100% quality
+- Text watermark: "(C) Michael J Wright Estate | All Rights Reserved"
 - Output: filename_web.jpg in web_optimized subfolder
 """
 
@@ -23,8 +22,22 @@ import threading
 from typing import Optional, Callable
 import json
 
+
+def get_resource_path(relative_path: str) -> str:
+    """Get absolute path to resource, works for dev and for PyInstaller."""
+    if hasattr(sys, '_MEIPASS'):
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+
 # Add src to path for imports
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+src_path = get_resource_path('src')
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
 from image_processor import ImageProcessor, ProcessingConfig
 
 # Set appearance mode and color theme
@@ -72,7 +85,7 @@ class ImageProcessorGUI:
         # Subtitle with specs
         subtitle_label = ctk.CTkLabel(
             main_frame, 
-            text="1200px long edge • sRGB • 72 DPI • JPEG < 300KB • © Watermark", 
+            text="2400px long edge • sRGB • 300 DPI • JPEG 100% • © Outlined Watermark", 
             font=ctk.CTkFont(size=12),
             text_color="gray"
         )
@@ -136,7 +149,7 @@ class ImageProcessorGUI:
         
         ctk.CTkLabel(watermark_frame, text="Watermark Text:", font=ctk.CTkFont(weight="bold", size=14)).pack(anchor="w", padx=10, pady=(10, 5))
         
-        self.watermark_text_var = ctk.StringVar(value="© Michael J Wright Estate - Property of")
+        self.watermark_text_var = ctk.StringVar(value="Michael J Wright Estate | All Rights Reserved")
         self.watermark_text_entry = ctk.CTkEntry(
             watermark_frame, 
             textvariable=self.watermark_text_var, 
@@ -157,9 +170,10 @@ class ImageProcessorGUI:
         
         ctk.CTkLabel(summary_frame, text="Processing Settings:", font=ctk.CTkFont(weight="bold", size=14)).pack(anchor="w", padx=10, pady=(10, 5))
         
-        settings_text = """• Resize: 1200px on long edge (paintings optimized)
+        settings_text = """• Resize: 2400px on long edge (paintings optimized)
 • Color: sRGB color space
-• Resolution: 72 DPI (web standard)
+• Resolution: 300 DPI, 100% JPEG quality
+• Watermark: White text with dark outline (visible on any background)
 • Format: JPEG at 75-80% quality
 • Target: < 300 KB per image
 • Output: filename_web.jpg in web_optimized subfolder"""
@@ -173,7 +187,7 @@ class ImageProcessorGUI:
         
         # Format and quality (keep for compatibility but set defaults)
         self.format_var = ctk.StringVar(value="JPEG")
-        self.quality_var = ctk.IntVar(value=77)
+        self.quality_var = ctk.IntVar(value=100)
         self.quality_label = ctk.CTkLabel(summary_frame, text="77")
     
     def create_advanced_tab(self):
@@ -190,11 +204,11 @@ class ImageProcessorGUI:
         opacity_frame.pack(fill="x", padx=10, pady=(0, 5))
         
         ctk.CTkLabel(opacity_frame, text="Opacity (lower = more subtle):").pack(side="left", padx=(10, 10))
-        self.text_opacity_var = ctk.IntVar(value=25)  # 0-255, 25 is ~10%
-        opacity_slider = ctk.CTkSlider(opacity_frame, from_=10, to=80, variable=self.text_opacity_var, number_of_steps=70)
+        self.text_opacity_var = ctk.IntVar(value=63)  # 0-255, 63 is ~25%
+        opacity_slider = ctk.CTkSlider(opacity_frame, from_=30, to=150, variable=self.text_opacity_var, number_of_steps=120)
         opacity_slider.pack(side="left", fill="x", expand=True, padx=(0, 10))
         
-        self.text_opacity_label = ctk.CTkLabel(opacity_frame, text="25")
+        self.text_opacity_label = ctk.CTkLabel(opacity_frame, text="63")
         self.text_opacity_label.pack(side="left", padx=(0, 10))
         opacity_slider.configure(command=self.update_text_opacity_label)
         
@@ -216,11 +230,11 @@ class ImageProcessorGUI:
         spacing_frame.pack(fill="x", padx=10, pady=(0, 5))
         
         ctk.CTkLabel(spacing_frame, text="Text Spacing:").pack(side="left", padx=(10, 10))
-        self.text_spacing_var = ctk.DoubleVar(value=1.8)
-        spacing_slider = ctk.CTkSlider(spacing_frame, from_=1.2, to=3.0, variable=self.text_spacing_var, number_of_steps=18)
+        self.text_spacing_var = ctk.DoubleVar(value=-0.3)
+        spacing_slider = ctk.CTkSlider(spacing_frame, from_=-0.5, to=0.5, variable=self.text_spacing_var, number_of_steps=20)
         spacing_slider.pack(side="left", fill="x", expand=True, padx=(0, 10))
         
-        self.text_spacing_label = ctk.CTkLabel(spacing_frame, text="1.8")
+        self.text_spacing_label = ctk.CTkLabel(spacing_frame, text="-0.3")
         self.text_spacing_label.pack(side="left", padx=(0, 10))
         spacing_slider.configure(command=self.update_text_spacing_label)
         
@@ -229,11 +243,11 @@ class ImageProcessorGUI:
         font_frame.pack(fill="x", padx=10, pady=(0, 10))
         
         ctk.CTkLabel(font_frame, text="Font Size Ratio:").pack(side="left", padx=(10, 10))
-        self.font_size_var = ctk.DoubleVar(value=0.025)
-        font_slider = ctk.CTkSlider(font_frame, from_=0.015, to=0.05, variable=self.font_size_var, number_of_steps=35)
+        self.font_size_var = ctk.DoubleVar(value=0.015)
+        font_slider = ctk.CTkSlider(font_frame, from_=0.010, to=0.05, variable=self.font_size_var, number_of_steps=40)
         font_slider.pack(side="left", fill="x", expand=True, padx=(0, 10))
         
-        self.font_size_label = ctk.CTkLabel(font_frame, text="0.025")
+        self.font_size_label = ctk.CTkLabel(font_frame, text="0.015")
         self.font_size_label.pack(side="left", padx=(0, 10))
         font_slider.configure(command=self.update_font_size_label)
         
@@ -248,13 +262,13 @@ class ImageProcessorGUI:
         
         # Long edge pixels
         ctk.CTkLabel(dimensions_frame, text="Long Edge (px):").pack(side="left", padx=(10, 10))
-        self.long_edge_var = ctk.IntVar(value=1200)
+        self.long_edge_var = ctk.IntVar(value=2400)
         long_edge_entry = ctk.CTkEntry(dimensions_frame, textvariable=self.long_edge_var, width=100)
         long_edge_entry.pack(side="left", padx=(0, 20))
         
         # Target file size
         ctk.CTkLabel(dimensions_frame, text="Target Max KB:").pack(side="left", padx=(0, 10))
-        self.target_size_var = ctk.IntVar(value=300)
+        self.target_size_var = ctk.IntVar(value=5000)
         target_size_entry = ctk.CTkEntry(dimensions_frame, textvariable=self.target_size_var, width=100)
         target_size_entry.pack(side="left", padx=(0, 10))
         
@@ -489,7 +503,7 @@ class ImageProcessorGUI:
             
             # Web optimization settings
             long_edge_pixels=self.long_edge_var.get(),
-            output_dpi=72,
+            output_dpi=300,
             convert_to_srgb=True,
             web_output_suffix=self.suffix_var.get(),
             create_subfolder=True,
@@ -536,8 +550,12 @@ class ImageProcessorGUI:
         """Run the image processing with progress updates."""
         try:
             def progress_callback(current, total):
+                if not self.is_processing:
+                    return False  # Signal to stop
                 progress = current / total
-                self.root.after(0, lambda: self.update_progress(progress, current, total))
+                # Use default args to capture current values, not references
+                self.root.after(0, lambda p=progress, c=current, t=total: self.update_progress(p, c, t))
+                return True  # Continue processing
             
             self.root.after(0, lambda: self.progress_label.configure(text="Processing images..."))
             
@@ -559,15 +577,27 @@ class ImageProcessorGUI:
         self.is_processing = False
         self.process_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-        self.progress_bar.set(1.0)
         
         success_count = results.get('processed', 0)
         failed_count = results.get('failed', 0)
         total_count = results.get('total', 0)
+        was_stopped = results.get('stopped', False)
         
-        self.progress_label.configure(
-            text=f"Complete: {success_count} processed, {failed_count} failed"
-        )
+        if was_stopped:
+            self.progress_label.configure(
+                text=f"Stopped: {success_count} processed before stopping"
+            )
+            messagebox.showinfo(
+                "Processing Stopped",
+                f"Processing was stopped by user.\n\n"
+                f"Processed before stopping: {success_count} files\n"
+                f"Failed: {failed_count} files"
+            )
+        else:
+            self.progress_bar.set(1.0)
+            self.progress_label.configure(
+                text=f"Complete: {success_count} processed, {failed_count} failed"
+            )
         
         # Get output location for message
         input_folder = self.input_folder_var.get()
@@ -593,11 +623,11 @@ class ImageProcessorGUI:
         messagebox.showerror("Processing Error", f"An error occurred:\n{error_message}")
     
     def stop_processing(self):
-        """Stop the current processing (note: this is a graceful request)."""
+        """Stop the current processing."""
         if self.is_processing:
             self.is_processing = False
-            self.progress_label.configure(text="Stopping...")
-            # Note: Actual stopping depends on the processing implementation
+            self.progress_label.configure(text="Stopping after current file...")
+            self.stop_btn.configure(state="disabled")
     
     def save_settings(self):
         """Save current settings to file."""
@@ -725,5 +755,9 @@ class ImageProcessorGUI:
 
 
 if __name__ == "__main__":
+    # Required for PyInstaller + multiprocessing on Windows
+    import multiprocessing
+    multiprocessing.freeze_support()
+    
     app = ImageProcessorGUI()
     app.run()

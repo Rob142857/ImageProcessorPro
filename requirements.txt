@@ -30,3 +30,5 @@ azure-cognitiveservices-vision-computervision>=0.9.0
 
 # Performance optimization (optional)
 numba>=0.58.0
+# Build/packaging (for creating executables)
+pyinstaller>=6.0.0
