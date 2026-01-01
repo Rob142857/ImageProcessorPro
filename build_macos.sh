@@ -44,6 +44,16 @@ pip install pyinstaller --upgrade
 # Run the build
 echo ""
 echo "Building application..."
+echo "Current directory: $(pwd)"
+echo "Looking for: ImageProcessorPro.spec"
+
+if [ ! -f "ImageProcessorPro.spec" ]; then
+    echo "ERROR: ImageProcessorPro.spec not found in current directory!"
+    echo "Files in current directory:"
+    ls -la
+    exit 1
+fi
+
 pyinstaller ImageProcessorPro.spec --noconfirm
 
 if [ $? -eq 0 ]; then
