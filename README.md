@@ -1,13 +1,22 @@
-# Image Processor Pro - Automated Watermarking & Web Optimization
+# MJW Estate Web Image Optimizer
 
 A comprehensive, user-friendly solution for automated image processing with watermarking and web optimization. Built for Windows 11 with powerful hardware and Azure integration capabilities.
+
+**Optimized for Michael J Wright Estate artwork processing:**
+- 📐 **1200px long edge** - Perfect for web gallery display
+- 🎨 **sRGB color space** - Consistent color across devices
+- 📱 **72 DPI** - Web standard resolution
+- 📦 **JPEG < 300KB** - Fast loading, great quality
+- © **Text watermark** - "© Michael J Wright Estate - Property of"
 
 ## 🚀 Features
 
 ### Core Functionality
 - **Multi-format Support**: PDF, JPG, JPEG, PNG, BMP, TIFF files
-- **Intelligent Watermarking**: Transparent PNG watermarks with customizable opacity, position, and scaling
-- **Web Optimization**: Automatic resizing and compression for web-compatible formats
+- **Text Watermarking**: Repeating diagonal text watermark with adjustable transparency
+- **Image Watermarking**: Transparent PNG watermarks with customizable opacity, position, and scaling
+- **Web Optimization**: Automatic resizing to 1200px long edge, sRGB conversion, 72 DPI
+- **Smart Compression**: Targets < 300KB file size with quality optimization
 - **Batch Processing**: Process entire folders with progress tracking
 - **High Performance**: Multi-processing support optimized for powerful hardware
 
@@ -52,32 +61,30 @@ Key packages:
 ### 1. Setup
 ```bash
 # Clone or download the project
-cd ImageProcessorMJWProject
+cd ImageProcessorPro
 
 # Install dependencies
 pip install -r requirements.txt
-
-# Create input/output folders
-mkdir input output watermarks
 ```
 
-### 2. Add Your Watermark
-Place a transparent PNG watermark in the `watermarks/` folder and update the configuration.
-
-### 3. Choose Your Interface
+### 2. Choose Your Interface
 
 #### GUI Application (Recommended for most users)
 ```bash
 python gui_app.py
 ```
+Simply select your folder with paintings/images and click "Start Processing". Output will be saved to a `web_optimized` subfolder.
 
 #### Command Line (For automation)
 ```bash
-# Basic usage
-python cli.py -i "input_folder" -o "output_folder" -w "watermarks/logo.png"
+# Quick web optimization (uses MJW Estate defaults)
+python cli.py -i "paintings_folder"
+
+# Custom watermark text
+python cli.py -i "photos" --watermark-text "© My Custom Text"
 
 # Advanced options
-python cli.py -i "photos" -o "web_photos" -w "logo.png" --quality 90 --opacity 0.5 --format WEBP
+python cli.py -i "photos" --long-edge 1500 --quality 85 --text-opacity 30
 ```
 
 #### HTTP API (For Power Platform integration)
@@ -93,7 +100,7 @@ The system supports YAML configuration files for easy preset management:
 
 ```bash
 # Use a specific config file
-python cli.py --config config/web_optimized_config.yaml
+python cli.py --config config/web_optimization_config.yaml
 
 # Generate a new config template
 python cli.py --generate-config my_settings.yaml

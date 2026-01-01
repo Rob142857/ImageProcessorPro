@@ -3,6 +3,13 @@ Command Line Interface for Image Processor
 =========================================
 
 A powerful CLI for batch processing images with watermarks and web optimization.
+
+Optimized for Michael J Wright Estate web image processing:
+- Resize to 1200px long edge
+- sRGB color space, 72 DPI
+- JPEG at 75-80% quality (< 300KB)
+- Text watermark: "© Michael J Wright Estate - Property of"
+- Output: filename_web.jpg in web_optimized subfolder
 """
 
 import argparse
@@ -22,15 +29,18 @@ def create_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     
     parser = argparse.ArgumentParser(
-        description="Image Processor CLI - Automated watermarking and web optimization",
+        description="MJW Estate Web Image Optimizer - Automated watermarking and web optimization",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage
-  python cli.py -i "input_folder" -o "output_folder" -w "watermark.png"
+  # Quick web optimization (uses defaults optimized for MJW Estate)
+  python cli.py -i "paintings_folder"
+  
+  # Custom watermark text
+  python cli.py -i "photos" --watermark-text "© My Custom Text"
   
   # Advanced options
-  python cli.py -i "photos" -o "web_photos" -w "logo.png" --quality 90 --opacity 0.5 --format WEBP
+  python cli.py -i "photos" --long-edge 1500 --quality 85 --opacity 30
   
   # Use configuration file
   python cli.py --config "my_settings.yaml"
@@ -41,25 +51,52 @@ Examples:
     )
     
     # Input/Output
-    parser.add_argument('-i', '--input', type=str, help='Input folder containing images')
-    parser.add_argument('-o', '--output', type=str, help='Output folder for processed images')
-    parser.add_argument('-w', '--watermark', type=str, help='Path to watermark PNG file')
+    parser.add_argument('-i', '--input', type=str, required=False,
+                       help='Input folder containing images')
+    parser.add_argument('-o', '--output', type=str, default=None,
+                       help='Output folder (default: creates subfolder in input)')
+    parser.add_argument('-w', '--watermark', type=str, help='Path to watermark PNG file (optional, uses text by default)')
+    
+    # Web optimization settings (new defaults for MJW Estate)
+    parser.add_argument('--long-edge', type=int, default=1200,
+                       help='Long edge size in pixels for paintings (default: 1200)')
+    parser.add_argument('--target-size', type=int, default=300,
+                       help='Target max file size in KB (default: 300)')
+    parser.add_argument('--subfolder', type=str, default='web_optimized',
+                       help='Name of output subfolder (default: web_optimized)')
+    parser.add_argument('--suffix', type=str, default='_web',
+                       help='Filename suffix for processed files (default: _web)')
+    
+    # Text watermark settings (new)
+    parser.add_argument('--watermark-text', type=str, 
+                       default='© Michael J Wright Estate - Property of',
+                       help='Text watermark to apply across images')
+    parser.add_argument('--text-opacity', type=int, default=25, metavar='0-255',
+                       help='Text watermark opacity (0=invisible, 255=solid, default: 25)')
+    parser.add_argument('--text-rotation', type=int, default=-30,
+                       help='Text rotation angle in degrees (default: -30)')
+    parser.add_argument('--text-spacing', type=float, default=1.8,
+                       help='Text spacing ratio (default: 1.8)')
+    parser.add_argument('--font-size', type=float, default=0.025,
+                       help='Font size as ratio of image width (default: 0.025)')
+    parser.add_argument('--no-text-watermark', action='store_true',
+                       help='Disable text watermark (use image watermark instead)')
     
     # Output settings
     parser.add_argument('--format', choices=['JPEG', 'PNG', 'WEBP'], default='JPEG',
                        help='Output image format (default: JPEG)')
-    parser.add_argument('--quality', type=int, default=85, metavar='1-100',
-                       help='Output quality for JPEG/WEBP (default: 85)')
+    parser.add_argument('--quality', type=int, default=77, metavar='1-100',
+                       help='Output quality for JPEG/WEBP (default: 77)')
     
-    # Watermark settings
+    # Image watermark settings (legacy/optional)
     parser.add_argument('--opacity', type=float, default=0.3, metavar='0.1-1.0',
-                       help='Watermark opacity (default: 0.3)')
+                       help='Image watermark opacity (default: 0.3)')
     parser.add_argument('--position', choices=['center', 'top-left', 'top-right', 'bottom-left', 'bottom-right'],
-                       default='bottom-right', help='Watermark position (default: bottom-right)')
+                       default='bottom-right', help='Image watermark position (default: bottom-right)')
     parser.add_argument('--scale', type=float, default=0.2, metavar='0.05-0.5',
-                       help='Watermark scale relative to image size (default: 0.2)')
+                       help='Image watermark scale relative to image size (default: 0.2)')
     
-    # Tiled watermark settings (NEW)
+    # Tiled watermark settings
     parser.add_argument('--no-tiling', action='store_true',
                        help='Use single watermark instead of tiled pattern')
     parser.add_argument('--tile-size', type=float, default=0.18, metavar='0.1-0.3',
@@ -69,11 +106,11 @@ Examples:
     parser.add_argument('--tile-opacity-reduction', type=float, default=0.7, metavar='0.3-1.0',
                        help='Opacity reduction for tiled watermarks (default: 0.7)')
     
-    # Image size settings
+    # Image size settings (legacy)
     parser.add_argument('--max-width', type=int, default=1920,
-                       help='Maximum output width (default: 1920)')
+                       help='Maximum output width - legacy (default: 1920)')
     parser.add_argument('--max-height', type=int, default=1080,
-                       help='Maximum output height (default: 1080)')
+                       help='Maximum output height - legacy (default: 1080)')
     parser.add_argument('--no-preserve-aspect', action='store_true',
                        help='Do not preserve aspect ratio when resizing')
     
@@ -140,9 +177,9 @@ def validate_args(args: argparse.Namespace) -> bool:
         logger.error("Input folder is required (use -i or --input)")
         return False
     
-    if not args.output:
-        logger.error("Output folder is required (use -o or --output)")
-        return False
+    # Output folder is optional in subfolder mode
+    # if not args.output:
+    #     logger.info("No output folder specified - will create subfolder in input directory")
     
     # Check input folder exists
     if not os.path.exists(args.input):
@@ -175,11 +212,24 @@ def args_to_config(args: argparse.Namespace) -> ProcessingConfig:
     
     return ProcessingConfig(
         input_folder=args.input or "",
-        output_folder=args.output or "",
+        output_folder=args.output or args.input or "",  # Default to input folder for subfolder mode
         watermark_path=args.watermark or "",
+        
+        # JPEG quality settings
         jpeg_quality=args.quality,
         png_compression=6,
         webp_quality=args.quality,
+        target_max_size_kb=args.target_size,
+        
+        # Text watermark settings (new primary mode)
+        use_text_watermark=not args.no_text_watermark,
+        watermark_text=args.watermark_text,
+        text_font_size_ratio=args.font_size,
+        text_watermark_opacity=args.text_opacity,
+        text_rotation_angle=args.text_rotation,
+        text_spacing_ratio=args.text_spacing,
+        
+        # Image watermark settings (legacy/optional)
         watermark_opacity=args.opacity,
         watermark_position=args.position,
         watermark_scale=args.scale,
@@ -187,6 +237,16 @@ def args_to_config(args: argparse.Namespace) -> ProcessingConfig:
         tile_size_ratio=args.tile_size,
         tile_spacing_ratio=args.tile_spacing,
         tile_opacity_reduction=args.tile_opacity_reduction,
+        
+        # Web optimization settings
+        long_edge_pixels=args.long_edge,
+        output_dpi=72,
+        convert_to_srgb=True,
+        web_output_suffix=args.suffix,
+        create_subfolder=True,
+        subfolder_name=args.subfolder,
+        
+        # Size and format settings
         max_width=args.max_width,
         max_height=args.max_height,
         output_format=args.format,
@@ -198,24 +258,38 @@ def args_to_config(args: argparse.Namespace) -> ProcessingConfig:
 
 
 def generate_default_config(output_path: str) -> None:
-    """Generate a default configuration file."""
+    """Generate a default configuration file for MJW Estate web optimization."""
     
-    config = ProcessingConfig()
-    
-    # Add some example values
-    config.input_folder = "input"
-    config.output_folder = "output"
-    config.watermark_path = "watermarks/watermark.png"
+    config = ProcessingConfig(
+        input_folder="input",
+        output_folder="input",  # Subfolder mode
+        # Text watermark
+        use_text_watermark=True,
+        watermark_text="© Michael J Wright Estate - Property of",
+        text_watermark_opacity=25,
+        text_rotation_angle=-30,
+        text_spacing_ratio=1.8,
+        text_font_size_ratio=0.025,
+        # Web optimization
+        long_edge_pixels=1200,
+        output_dpi=72,
+        convert_to_srgb=True,
+        jpeg_quality=77,
+        target_max_size_kb=300,
+        web_output_suffix="_web",
+        create_subfolder=True,
+        subfolder_name="web_optimized",
+        output_format="JPEG"
+    )
     
     config.save_to_file(output_path)
     logger.info(f"Default configuration saved to: {output_path}")
     
     # Also create example folder structure
     os.makedirs("input", exist_ok=True)
-    os.makedirs("output", exist_ok=True)
     os.makedirs("watermarks", exist_ok=True)
     
-    logger.info("Created example folder structure: input/, output/, watermarks/")
+    logger.info("Created example folder structure: input/, watermarks/")
 
 
 def run_dry_run(processor: ImageProcessor) -> None:
@@ -229,20 +303,36 @@ def run_dry_run(processor: ImageProcessor) -> None:
     
     logger.info(f"Dry run - Would process {len(input_files)} files:")
     logger.info(f"Input folder: {processor.config.input_folder}")
-    logger.info(f"Output folder: {processor.config.output_folder}")
+    
+    # Show output location
+    if processor.config.create_subfolder:
+        output_loc = os.path.join(processor.config.input_folder, processor.config.subfolder_name)
+        logger.info(f"Output folder: {output_loc} (subfolder)")
+    else:
+        logger.info(f"Output folder: {processor.config.output_folder}")
+    
     logger.info(f"Output format: {processor.config.output_format}")
     logger.info(f"Quality: {processor.config.jpeg_quality}")
+    logger.info(f"Target size: < {processor.config.target_max_size_kb} KB")
     
-    if processor.config.watermark_path:
-        logger.info(f"Watermark: {processor.config.watermark_path}")
+    # Web optimization settings
+    logger.info(f"Long edge: {processor.config.long_edge_pixels}px")
+    logger.info(f"DPI: {processor.config.output_dpi}")
+    logger.info(f"sRGB conversion: {processor.config.convert_to_srgb}")
+    logger.info(f"File suffix: {processor.config.web_output_suffix}")
+    
+    # Watermark info
+    if processor.config.use_text_watermark:
+        logger.info(f"Text watermark: '{processor.config.watermark_text}'")
+        logger.info(f"  Opacity: {processor.config.text_watermark_opacity}/255")
+        logger.info(f"  Rotation: {processor.config.text_rotation_angle}°")
+    elif processor.config.watermark_path:
+        logger.info(f"Image watermark: {processor.config.watermark_path}")
         logger.info(f"  Opacity: {processor.config.watermark_opacity}")
         logger.info(f"  Position: {processor.config.watermark_position}")
-        logger.info(f"  Scale: {processor.config.watermark_scale}")
     else:
         logger.info("Watermark: None")
     
-    logger.info(f"Max dimensions: {processor.config.max_width}x{processor.config.max_height}")
-    logger.info(f"Preserve aspect ratio: {processor.config.preserve_aspect_ratio}")
     logger.info(f"Multiprocessing: {processor.config.use_multiprocessing}")
     
     if processor.config.max_workers:
@@ -301,9 +391,10 @@ def main():
         logger.error("Valid input folder is required")
         return 1
     
-    if not config.output_folder:
-        logger.error("Output folder is required")
-        return 1
+    # Output folder not required in subfolder mode
+    # if not config.output_folder:
+    #     logger.error("Output folder is required")
+    #     return 1
     
     try:
         # Create processor
@@ -315,9 +406,16 @@ def main():
             return 0
         
         # Run actual processing
-        logger.info("Starting image processing...")
+        logger.info("Starting MJW Estate web image processing...")
         logger.info(f"Input: {config.input_folder}")
-        logger.info(f"Output: {config.output_folder}")
+        
+        if config.create_subfolder:
+            output_loc = os.path.join(config.input_folder, config.subfolder_name)
+            logger.info(f"Output: {output_loc}")
+        else:
+            logger.info(f"Output: {config.output_folder}")
+        
+        logger.info(f"Settings: {config.long_edge_pixels}px, {config.output_dpi} DPI, JPEG {config.jpeg_quality}%, < {config.target_max_size_kb}KB")
         
         def progress_callback(current: int, total: int):
             if not args.quiet:
@@ -335,6 +433,9 @@ def main():
         logger.info(f"  Successfully processed: {success_count} files")
         logger.info(f"  Failed: {failed_count} files")
         logger.info(f"  Total: {total_count} files")
+        
+        if config.create_subfolder:
+            logger.info(f"  Output saved to: {os.path.join(config.input_folder, config.subfolder_name)}")
         
         if failed_count > 0:
             logger.warning(f"{failed_count} files failed to process. Check logs for details.")

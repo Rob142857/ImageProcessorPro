@@ -23,9 +23,10 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import multiprocessing as mp
 
 # Core image processing
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance, ImageOps, ImageDraw, ImageFont, ImageCms
 import cv2
 import numpy as np
+import io
 
 # PDF processing
 import fitz  # PyMuPDF
@@ -56,9 +57,10 @@ class ProcessingConfig:
     watermark_path: str = ""
     
     # Image quality settings
-    jpeg_quality: int = 85
+    jpeg_quality: int = 77  # 75-80% for web optimization
     png_compression: int = 6
     webp_quality: int = 85
+    target_max_size_kb: int = 300  # Target max file size in KB
     
     # Watermark settings
     watermark_opacity: float = 0.3
@@ -70,6 +72,22 @@ class ProcessingConfig:
     tile_size_ratio: float = 0.2  # Size of each tile relative to image width
     tile_spacing_ratio: float = 1.5  # Spacing between tiles (multiplier of tile size)
     tile_opacity_reduction: float = 0.7  # Reduce opacity for tiled watermarks
+    
+    # Text watermark settings (for Michael J Wright Estate)
+    use_text_watermark: bool = True  # Use text-based watermark instead of image
+    watermark_text: str = "© Michael J Wright Estate - Property of"
+    text_font_size_ratio: float = 0.025  # Font size relative to image width
+    text_watermark_opacity: int = 25  # Very light opacity (0-255, ~10% = 25)
+    text_rotation_angle: int = -30  # Diagonal rotation angle
+    text_spacing_ratio: float = 1.8  # Spacing between text rows/columns
+    
+    # Web optimization settings
+    long_edge_pixels: int = 1200  # Resize to this on long edge
+    output_dpi: int = 72  # DPI for web images
+    convert_to_srgb: bool = True  # Convert to sRGB color space
+    web_output_suffix: str = "_web"  # Suffix for output files
+    create_subfolder: bool = True  # Create output subfolder in source folder
+    subfolder_name: str = "web_optimized"  # Name of output subfolder
     
     # Processing settings
     max_width: int = 1920
@@ -122,8 +140,121 @@ class ImageProcessor:
             logger.error(f"Failed to load watermark: {e}")
             self.watermark_image = None
     
+    def apply_text_watermark(self, image: Image.Image) -> Image.Image:
+        """Apply repeating text watermark across the entire image with transparency.
+        
+        The watermark uses '© Michael J Wright Estate - Property of' text
+        repeated diagonally across the image at low opacity so it's visible
+        at high magnification but doesn't interrupt the image at normal view.
+        """
+        try:
+            # Ensure image is in RGBA mode for transparency
+            if image.mode != 'RGBA':
+                image = image.convert('RGBA')
+            
+            img_width, img_height = image.size
+            
+            # Calculate font size based on image dimensions
+            font_size = max(int(img_width * self.config.text_font_size_ratio), 12)
+            
+            # Try to load a font, fall back to default
+            try:
+                # Try common Windows fonts first
+                font_paths = [
+                    "C:/Windows/Fonts/arial.ttf",
+                    "C:/Windows/Fonts/calibri.ttf",
+                    "C:/Windows/Fonts/segoeui.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                    "/System/Library/Fonts/Helvetica.ttc",
+                ]
+                font = None
+                for font_path in font_paths:
+                    if os.path.exists(font_path):
+                        font = ImageFont.truetype(font_path, font_size)
+                        break
+                if font is None:
+                    font = ImageFont.load_default()
+            except Exception:
+                font = ImageFont.load_default()
+            
+            # Create a temporary image to measure text size
+            temp_img = Image.new('RGBA', (1, 1), (0, 0, 0, 0))
+            temp_draw = ImageDraw.Draw(temp_img)
+            
+            # Get text bounding box
+            text = self.config.watermark_text
+            bbox = temp_draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            
+            # Create watermark overlay for single text block (will be rotated)
+            # Make it bigger to account for rotation
+            padding = 50
+            single_text_img = Image.new('RGBA', (text_width + padding * 2, text_height + padding * 2), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(single_text_img)
+            
+            # Draw text in white with low opacity
+            opacity = self.config.text_watermark_opacity
+            draw.text((padding, padding), text, font=font, fill=(255, 255, 255, opacity))
+            
+            # Rotate the text block
+            rotated_text = single_text_img.rotate(
+                self.config.text_rotation_angle, 
+                expand=True, 
+                resample=Image.Resampling.BICUBIC
+            )
+            
+            # Get rotated dimensions
+            rotated_width, rotated_height = rotated_text.size
+            
+            # Calculate spacing between watermarks
+            spacing_x = int(rotated_width * self.config.text_spacing_ratio)
+            spacing_y = int(rotated_height * self.config.text_spacing_ratio)
+            
+            # Create the full overlay
+            overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
+            
+            # Tile the rotated text across the entire image
+            # Start from negative positions to ensure full coverage
+            start_x = -rotated_width
+            start_y = -rotated_height
+            
+            tiles_placed = 0
+            y = start_y
+            row = 0
+            while y < img_height + rotated_height:
+                x = start_x
+                # Offset every other row for better coverage
+                if row % 2 == 1:
+                    x += spacing_x // 2
+                
+                while x < img_width + rotated_width:
+                    overlay.paste(rotated_text, (x, y), rotated_text)
+                    tiles_placed += 1
+                    x += spacing_x
+                
+                y += spacing_y
+                row += 1
+            
+            # Composite the watermark onto the image
+            result = Image.alpha_composite(image, overlay)
+            
+            logger.info(f"Applied text watermark: '{text}' - {tiles_placed} tiles at {opacity}/255 opacity")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to apply text watermark: {e}")
+            import traceback
+            traceback.print_exc()
+            return image
+    
     def apply_watermark(self, image: Image.Image) -> Image.Image:
-        """Apply watermark to image - either tiled pattern or single positioned watermark."""
+        """Apply watermark to image - text watermark, tiled pattern, or single positioned watermark."""
+        # Use text watermark if configured (primary mode for Michael J Wright Estate)
+        if self.config.use_text_watermark:
+            return self.apply_text_watermark(image)
+        
+        # Otherwise use image-based watermark if available
         if not self.watermark_image:
             return image
         
@@ -248,25 +379,35 @@ class ImageProcessor:
         return positions.get(self.config.watermark_position, positions['bottom-right'])
     
     def resize_for_web(self, image: Image.Image) -> Image.Image:
-        """Resize image for web optimization while preserving aspect ratio."""
+        """Resize image for web optimization.
+        
+        Resizes to configured long edge (default 1200px) while preserving aspect ratio.
+        This is optimized for paintings/artwork display on the web.
+        """
         width, height = image.size
+        long_edge = self.config.long_edge_pixels
         
-        if width <= self.config.max_width and height <= self.config.max_height:
-            return image
-        
-        if self.config.preserve_aspect_ratio:
-            # Calculate scaling factor
-            scale_w = self.config.max_width / width
-            scale_h = self.config.max_height / height
-            scale = min(scale_w, scale_h)
+        # Determine which dimension is the long edge
+        if width >= height:
+            # Landscape or square - width is long edge
+            if width <= long_edge:
+                return image  # No resize needed
             
-            new_width = int(width * scale)
+            scale = long_edge / width
+            new_width = long_edge
             new_height = int(height * scale)
         else:
-            new_width = min(width, self.config.max_width)
-            new_height = min(height, self.config.max_height)
+            # Portrait - height is long edge
+            if height <= long_edge:
+                return image  # No resize needed
+            
+            scale = long_edge / height
+            new_height = long_edge
+            new_width = int(width * scale)
         
-        return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        logger.info(f"Resized image: {width}x{height} -> {new_width}x{new_height} (long edge: {long_edge}px)")
+        return resized
     
     def process_pdf(self, pdf_path: str) -> List[Image.Image]:
         """Convert PDF pages to images."""
@@ -332,23 +473,120 @@ class ImageProcessor:
             return False
     
     def save_optimized_image(self, image: Image.Image, output_path: str) -> None:
-        """Save image with optimized settings for web."""
+        """Save image with optimized settings for web.
+        
+        Includes:
+        - sRGB color space conversion
+        - 72 DPI for web
+        - JPEG at 75-80% quality targeting < 300KB
+        """
         format_upper = self.config.output_format.upper()
         
+        # Convert to sRGB color space if configured
+        if self.config.convert_to_srgb:
+            image = self._convert_to_srgb(image)
+        
+        # Convert to RGB if saving as JPEG (remove alpha channel)
+        if format_upper == 'JPEG' and image.mode in ('RGBA', 'P', 'LA'):
+            # Create white background for transparency
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            if image.mode == 'P':
+                image = image.convert('RGBA')
+            if image.mode in ('RGBA', 'LA'):
+                background.paste(image, mask=image.split()[-1])
+                image = background
+            else:
+                image = image.convert('RGB')
+        
+        # Set DPI metadata
+        dpi = (self.config.output_dpi, self.config.output_dpi)
+        
         if format_upper == 'JPEG':
-            image.save(output_path, 'JPEG', 
-                      quality=self.config.jpeg_quality, 
-                      optimize=True)
+            # Try to hit target file size < 300KB with quality adjustment
+            image = self._save_jpeg_optimized(image, output_path, dpi)
         elif format_upper == 'PNG':
             image.save(output_path, 'PNG', 
                       compress_level=self.config.png_compression, 
-                      optimize=True)
+                      optimize=True,
+                      dpi=dpi)
         elif format_upper == 'WEBP':
             image.save(output_path, 'WEBP', 
                       quality=self.config.webp_quality, 
                       optimize=True)
         else:
-            image.save(output_path, optimize=True)
+            image.save(output_path, optimize=True, dpi=dpi)
+    
+    def _convert_to_srgb(self, image: Image.Image) -> Image.Image:
+        """Convert image to sRGB color space."""
+        try:
+            # Check if image has an ICC profile
+            if 'icc_profile' in image.info:
+                # Get the embedded profile
+                icc_profile = image.info.get('icc_profile')
+                if icc_profile:
+                    # Create sRGB profile
+                    srgb_profile = ImageCms.createProfile('sRGB')
+                    
+                    # Convert from embedded profile to sRGB
+                    try:
+                        input_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
+                        # Ensure we're in the right mode for the transform
+                        if image.mode == 'RGBA':
+                            image_rgb = image.convert('RGB')
+                            image_rgb = ImageCms.profileToProfile(
+                                image_rgb, input_profile, srgb_profile,
+                                outputMode='RGB'
+                            )
+                            # Preserve alpha
+                            r, g, b = image_rgb.split()
+                            a = image.split()[3]
+                            image = Image.merge('RGBA', (r, g, b, a))
+                        elif image.mode in ('RGB', 'L'):
+                            image = ImageCms.profileToProfile(
+                                image, input_profile, srgb_profile,
+                                outputMode='RGB' if image.mode == 'RGB' else 'L'
+                            )
+                        logger.debug("Converted image to sRGB color space")
+                    except Exception as e:
+                        logger.debug(f"Could not convert color profile: {e}")
+            
+            return image
+        except Exception as e:
+            logger.debug(f"sRGB conversion skipped: {e}")
+            return image
+    
+    def _save_jpeg_optimized(self, image: Image.Image, output_path: str, dpi: tuple) -> Image.Image:
+        """Save JPEG with optimization to target file size.
+        
+        Starts at configured quality (77%) and reduces if needed to stay under 300KB.
+        """
+        target_size_kb = self.config.target_max_size_kb
+        quality = self.config.jpeg_quality
+        min_quality = 60  # Don't go below this
+        
+        # First attempt at configured quality
+        buffer = io.BytesIO()
+        image.save(buffer, 'JPEG', quality=quality, optimize=True, dpi=dpi)
+        size_kb = buffer.tell() / 1024
+        
+        # If already under target, save directly
+        if size_kb <= target_size_kb:
+            image.save(output_path, 'JPEG', quality=quality, optimize=True, dpi=dpi)
+            logger.info(f"Saved {output_path}: {size_kb:.1f}KB at quality {quality}")
+            return image
+        
+        # Otherwise, reduce quality until we hit target
+        while size_kb > target_size_kb and quality > min_quality:
+            quality -= 3
+            buffer = io.BytesIO()
+            image.save(buffer, 'JPEG', quality=quality, optimize=True, dpi=dpi)
+            size_kb = buffer.tell() / 1024
+        
+        # Save with final quality
+        image.save(output_path, 'JPEG', quality=quality, optimize=True, dpi=dpi)
+        logger.info(f"Saved {output_path}: {size_kb:.1f}KB at quality {quality}")
+        
+        return image
     
     def get_image_files(self, folder_path: str) -> List[str]:
         """Get all supported image files from folder."""
@@ -432,30 +670,60 @@ class ImageProcessor:
         return self.process_single_image(input_path, output_path)
     
     def _get_output_path(self, input_path: str) -> str:
-        """Generate output path for processed image."""
-        input_file = Path(input_path)
-        relative_path = input_file.relative_to(self.config.input_folder)
+        """Generate output path for processed image.
         
-        # Change extension based on output format
-        output_name = relative_path.stem + f".{self.config.output_format.lower()}"
-        output_path = Path(self.config.output_folder) / relative_path.parent / output_name
+        For web optimization mode:
+        - Adds '_web' suffix to filename
+        - Creates 'web_optimized' subfolder in the source folder
+        
+        Example: /photos/painting.jpg -> /photos/web_optimized/painting_web.jpg
+        """
+        input_file = Path(input_path)
+        
+        # Determine output directory
+        if self.config.create_subfolder:
+            # Create subfolder in the source folder (not output folder)
+            source_folder = input_file.parent
+            output_dir = source_folder / self.config.subfolder_name
+        elif self.config.output_folder:
+            # Use configured output folder
+            relative_path = input_file.relative_to(self.config.input_folder)
+            output_dir = Path(self.config.output_folder) / relative_path.parent
+        else:
+            # Fall back to source folder
+            output_dir = input_file.parent
         
         # Create output directory if it doesn't exist
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate output filename with _web suffix
+        output_name = f"{input_file.stem}{self.config.web_output_suffix}.{self.config.output_format.lower()}"
+        output_path = output_dir / output_name
         
         return str(output_path)
 
 
 if __name__ == "__main__":
-    # Example usage
+    # Example usage - Web optimization for Michael J Wright Estate
     config = ProcessingConfig(
         input_folder="input",
         output_folder="output",
-        watermark_path="watermarks/watermark.png",
-        jpeg_quality=85,
-        watermark_opacity=0.3,
-        max_width=1920,
-        max_height=1080
+        # Text watermark settings
+        use_text_watermark=True,
+        watermark_text="© Michael J Wright Estate - Property of",
+        text_watermark_opacity=25,  # Very light - visible at zoom, not at full view
+        text_rotation_angle=-30,
+        text_spacing_ratio=1.8,
+        # Web optimization settings
+        long_edge_pixels=1200,
+        output_dpi=72,
+        convert_to_srgb=True,
+        jpeg_quality=77,
+        target_max_size_kb=300,
+        web_output_suffix="_web",
+        create_subfolder=True,
+        subfolder_name="web_optimized",
+        output_format="JPEG"
     )
     
     processor = ImageProcessor(config)

@@ -1,0 +1,52 @@
+# MJW Estate Web Image Optimizer - Default Configuration
+# =====================================================
+# Optimized for processing paintings/artwork for web display
+
+# Input/Output settings
+input_folder: ''
+output_folder: ''
+watermark_path: ''
+
+# JPEG quality and file size settings
+jpeg_quality: 77
+png_compression: 6
+webp_quality: 85
+target_max_size_kb: 300
+
+# Text watermark settings (primary mode)
+use_text_watermark: true
+watermark_text: '© Michael J Wright Estate - Property of'
+text_font_size_ratio: 0.025
+text_watermark_opacity: 25
+text_rotation_angle: -30
+text_spacing_ratio: 1.8
+
+# Image watermark settings (legacy/optional)
+watermark_opacity: 0.3
+watermark_position: bottom-right
+watermark_scale: 0.2
+use_tiled_watermark: true
+tile_size_ratio: 0.2
+tile_spacing_ratio: 1.5
+tile_opacity_reduction: 0.7
+
+# Web optimization settings
+long_edge_pixels: 1200
+output_dpi: 72
+convert_to_srgb: true
+web_output_suffix: '_web'
+create_subfolder: true
+subfolder_name: 'web_optimized'
+
+# Processing settings
+max_width: 1920
+max_height: 1080
+output_format: JPEG
+preserve_aspect_ratio: true
+
+# Performance settings
+use_multiprocessing: true
+max_workers: 4
+
+# PDF settings
+pdf_dpi: 200
