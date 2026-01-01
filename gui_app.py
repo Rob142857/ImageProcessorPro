@@ -14,35 +14,81 @@ Optimized for Michael J Wright Estate web image processing:
 
 import os
 import sys
-import tkinter as tk
-from tkinter import filedialog, messagebox
-import customtkinter as ctk
-from pathlib import Path
-import threading
-from typing import Optional, Callable
-import json
 
+# Early error logging for debugging Mac crashes
+def log_error(msg):
+    try:
+        with open(os.path.expanduser("~/Desktop/ImageProcessor_Error.log"), "a") as f:
+            f.write(f"{msg}\n")
+    except:
+        pass
+
+try:
+    log_error("=== App Starting ===")
+    log_error(f"Python: {sys.version}")
+    log_error(f"Platform: {sys.platform}")
+    log_error(f"CWD: {os.getcwd()}")
+    
+    import tkinter as tk
+    log_error("✓ tkinter imported")
+    
+    from tkinter import filedialog, messagebox
+    log_error("✓ tkinter dialogs imported")
+    
+    import customtkinter as ctk
+    log_error("✓ customtkinter imported")
+    
+    from pathlib import Path
+    import threading
+    from typing import Optional, Callable
+    import json
+    log_error("✓ other imports complete")
+    
+except Exception as e:
+    log_error(f"ERROR during imports: {e}")
+    import traceback
+    log_error(traceback.format_exc())
+    raise
 
 def get_resource_path(relative_path: str) -> str:
     """Get absolute path to resource, works for dev and for PyInstaller."""
-    if hasattr(sys, '_MEIPASS'):
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
-    else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_path, relative_path)
+    try:
+        if hasattr(sys, '_MEIPASS'):
+            # PyInstaller creates a temp folder and stores path in _MEIPASS
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        result = os.path.join(base_path, relative_path)
+        log_error(f"Resource path for '{relative_path}': {result}")
+        return result
+    except Exception as e:
+        log_error(f"ERROR in get_resource_path: {e}")
+        raise
 
 
 # Add src to path for imports
-src_path = get_resource_path('src')
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
-
-from image_processor import ImageProcessor, ProcessingConfig
+try:
+    src_path = get_resource_path('src')
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+    log_error(f"✓ Added src to path: {src_path}")
+    
+    from image_processor import ImageProcessor, ProcessingConfig
+    log_error("✓ image_processor imported")
+except Exception as e:
+    log_error(f"ERROR importing image_processor: {e}")
+    import traceback
+    log_error(traceback.format_exc())
+    raise
 
 # Set appearance mode and color theme
-ctk.set_appearance_mode("dark")  # Modes: "System", "Dark", "Light"
-ctk.set_default_color_theme("blue")  # Themes: "blue", "green", "dark-blue"
+try:
+    ctk.set_appearance_mode("dark")  # Modes: "System", "Dark", "Light"
+    ctk.set_default_color_theme("blue")  # Themes: "blue", "green", "dark-blue"
+    log_error("✓ CustomTkinter configured")
+except Exception as e:
+    log_error(f"ERROR configuring CustomTkinter: {e}")
+    raise
 
 
 class ImageProcessorGUI:
@@ -755,9 +801,31 @@ class ImageProcessorGUI:
 
 
 if __name__ == "__main__":
-    # Required for PyInstaller + multiprocessing on Windows
-    import multiprocessing
-    multiprocessing.freeze_support()
-    
-    app = ImageProcessorGUI()
-    app.run()
+    try:
+        log_error("=== Main entry point ===")
+        # Required for PyInstaller + multiprocessing on Windows
+        import multiprocessing
+        multiprocessing.freeze_support()
+        log_error("✓ freeze_support called")
+        
+        log_error("Creating ImageProcessorGUI...")
+        app = ImageProcessorGUI()
+        log_error("✓ GUI created")
+        
+        log_error("Starting mainloop...")
+        app.run()
+        log_error("✓ App closed normally")
+    except Exception as e:
+        log_error(f"FATAL ERROR in main: {e}")
+        import traceback
+        log_error(traceback.format_exc())
+        # Try to show error dialog
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror("Startup Error", f"Failed to start:\n\n{e}\n\nCheck ~/Desktop/ImageProcessor_Error.log")
+        except:
+            pass
+        raise
