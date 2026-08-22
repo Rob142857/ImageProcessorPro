@@ -1,4 +1,4 @@
-# High-quality processing for print-ready images
+# Legacy high-quality interactive preset (not the production archive derivative profile).
 # Use this for images that need higher quality but still web-optimized
 
 input_folder: "input"

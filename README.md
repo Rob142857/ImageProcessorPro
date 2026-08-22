@@ -1,415 +1,108 @@
-# MJW Estate Web Image Optimizer
+# ImageProcessorPro
 
-A comprehensive, user-friendly solution for automated image processing with watermarking and web optimization. Built for Windows 11 with powerful hardware and Azure integration capabilities.
+ImageProcessorPro creates public web derivatives from high-resolution artwork scans. SharePoint remains the source of truth for originals; this repository performs deterministic local rendering and does not connect directly to Fedora or PostgreSQL.
 
-**Optimized for Michael J Wright Estate artwork processing:**
-- 📐 **1200px long edge** - Perfect for web gallery display
-- 🎨 **sRGB color space** - Consistent color across devices
-- 📱 **72 DPI** - Web standard resolution
-- 📦 **JPEG < 300KB** - Fast loading, great quality
-- © **Text watermark** - "© Michael J Wright Estate - Property of"
+## Production workflow
 
-## 🚀 Features
+Use manifest mode for archive work:
 
-### Core Functionality
-- **Multi-format Support**: PDF, JPG, JPEG, PNG, BMP, TIFF files
-- **Text Watermarking**: Repeating diagonal text watermark with adjustable transparency
-- **Image Watermarking**: Transparent PNG watermarks with customizable opacity, position, and scaling
-- **Web Optimization**: Automatic resizing to 1200px long edge, sRGB conversion, 72 DPI
-- **Smart Compression**: Targets < 300KB file size with quality optimization
-- **Batch Processing**: Process entire folders with progress tracking
-- **High Performance**: Multi-processing support optimized for powerful hardware
-
-### User Interfaces
-- **Modern GUI**: Clean, intuitive interface built with CustomTkinter
-- **Command Line**: Powerful CLI for automation and scripting
-- **HTTP API**: RESTful API for Power Platform and cloud integration
-
-### Cloud Integration
-- **Azure Blob Storage**: Cloud-based image processing and storage
-- **Azure Computer Vision**: AI-powered image analysis and text detection
-- **Power Platform**: Ready-to-use Power Automate workflows and Power Apps integration
-
-### Enterprise Features
-- **Configuration Management**: YAML-based settings with presets
-- **Comprehensive Logging**: Detailed logs with rotation and retention
-- **Error Handling**: Robust error recovery and reporting
-- **Performance Monitoring**: Progress tracking and statistics
-
-## 📋 Requirements
-
-### System Requirements
-- **OS**: Windows 11 Pro/Business (recommended)
-- **Hardware**: Multi-core processor, 8GB+ RAM
-- **Python**: 3.8 or higher
-
-### Python Dependencies
-```bash
-pip install -r requirements.txt
+```powershell
+python cli.py --job-manifest job.json --config config/mjw-web-v2.yaml --output-dir derivatives
 ```
 
-Key packages:
-- **Pillow**: Image processing
-- **OpenCV**: Advanced image operations
-- **PyMuPDF**: PDF handling
-- **CustomTkinter**: Modern GUI
-- **Azure SDK**: Cloud integration (optional)
-- **Flask**: HTTP API (optional)
+The approved `mjw-web-v2` profile creates a deterministic `${catalogId}_web.jpg` with:
 
-## 🎯 Quick Start
+- a 2400 px maximum edge, progressive JPEG encoding and a hard 2500 KB ceiling;
+- physical EXIF orientation correction and sRGB output with an embedded ICC profile;
+- public-safe metadata stripping, including GPS data;
+- a restrained repeating MJW Estate watermark;
+- atomic output writes, decode verification and SHA-256 fixity;
+- a credential-free `*.jpg.json` sidecar containing stable SharePoint provenance, profile and watermark hashes, dimensions and input/output checksums.
 
-### 1. Setup
-```bash
-# Clone or download the project
-cd ImageProcessorPro
+The sidecar never records local absolute paths. A separately authenticated archive service should submit the derivative and sidecar to Fedora. Original scans remain read-only in SharePoint.
 
-# Install dependencies
-pip install -r requirements.txt
+See [the production workflow](docs/PRODUCTION_WORKFLOW.md) for the contract and idempotency rules.
+
+### Job manifest
+
+```json
+{
+  "schemaVersion": "mjw.image-job.v1",
+  "jobId": "job-2026-001",
+  "catalogId": "MJW-P-2026-001",
+  "inputPath": "C:/staging/scan-001.tif",
+  "sourceSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "sharePoint": {
+    "siteId": "site-id",
+    "driveId": "drive-id",
+    "itemId": "item-id",
+    "eTag": "etag-or-version-token",
+    "version": "1.0",
+    "originalFilename": "scan-001.tif",
+    "relativePath": "Originals/scan-001.tif"
+  },
+  "rights": "Michael J Wright Estate - All Rights Reserved",
+  "profileId": "mjw-web-v2",
+  "profileVersion": "2.0.0"
+}
 ```
 
-### 2. Choose Your Interface
+Unknown fields, credential-like keys, `000` catalog sequences, PDFs and source checksum mismatches are rejected. Production output must be outside the staged originals directory. Credentials belong in the calling service's secret store, never in a job or derivative sidecar.
 
-#### GUI Application (Recommended for most users)
-```bash
+## Install and test
+
+Python 3.11–3.13 is supported.
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python -m pip install --upgrade pip
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest
+```
+
+For the core renderer only, use `python -m pip install .`. Add extras as needed:
+
+```powershell
+python -m pip install ".[gui]"
+python -m pip install ".[pdf]"
+python -m pip install ".[api]"
+python -m pip install ".[azure]"
+```
+
+PDF support uses PyMuPDF, which is distributed under AGPL-3.0 or a commercial licence. Confirm the intended distribution model before packaging it. PDF processing is optional and disabled cleanly when the extra is absent.
+
+## Interactive tools
+
+The folder CLI and desktop GUI remain available for previews and legacy batches:
+
+```powershell
+python cli.py -i input
 python gui_app.py
 ```
-Simply select your folder with paintings/images and click "Start Processing". Output will be saved to a `web_optimized` subfolder.
 
-#### Command Line (For automation)
-```bash
-# Quick web optimization (uses MJW Estate defaults)
-python cli.py -i "paintings_folder"
+These interactive defaults are not the immutable archive profile. Production archive derivatives should always use manifest mode.
 
-# Custom watermark text
-python cli.py -i "photos" --watermark-text "© My Custom Text"
+The `power_platform` HTTP API and `azure` helpers are compatibility prototypes, not the production ingest boundary. The API binds to localhost by default, requires `IMAGE_PROCESSOR_API_TOKEN` for every non-health route, caps request/decoded payload size and disables remote configuration changes unless explicitly enabled. Put it behind an authenticated gateway before any network exposure.
 
-# Advanced options
-python cli.py -i "photos" --long-edge 1500 --quality 85 --text-opacity 30
+Azure Blob supports `DefaultAzureCredential` with `AZURE_STORAGE_ACCOUNT_URL`; a connection string remains compatibility-only. The legacy Computer Vision adapter is isolated in the `vision-legacy` extra because Azure Image Analysis is on a published retirement path.
+
+## Build
+
+Reproducible desktop builds use the pinned `build` extra:
+
+```powershell
+.venv\Scripts\python -m pip install ".[gui,build]"
+.venv\Scripts\python build_app.py
 ```
 
-#### HTTP API (For Power Platform integration)
-```bash
-# Start the API server
-python power_platform/power_platform_integration.py
-```
-
-## 🔧 Configuration
-
-### Using Configuration Files
-The system supports YAML configuration files for easy preset management:
-
-```bash
-# Use a specific config file
-python cli.py --config config/web_optimization_config.yaml
-
-# Generate a new config template
-python cli.py --generate-config my_settings.yaml
-```
-
-### Available Presets
-- **`default_config.yaml`**: Balanced quality and performance
-- **`high_quality_config.yaml`**: Maximum quality for important images
-- **`web_optimized_config.yaml`**: Fast processing for web use
-
-### Key Settings
-```yaml
-# Image Quality
-jpeg_quality: 85          # 1-100 (higher = better quality, larger files)
-output_format: "JPEG"     # JPEG, PNG, WEBP
-
-# Watermark
-watermark_opacity: 0.3    # 0.1-1.0 (transparency level)
-watermark_position: "bottom-right"  # Placement on image
-watermark_scale: 0.2      # Size relative to image (0.05-0.5)
-
-# Dimensions
-max_width: 1920           # Maximum output width
-max_height: 1080          # Maximum output height
-```
-
-## 🌐 Power Platform Integration
-
-### Power Automate Workflows
-Pre-built templates for:
-- **Email Processing**: Process attachments from emails
-- **SharePoint Integration**: Automatic folder monitoring
-- **OneDrive Batch**: Scheduled bulk processing
-
-Templates available in `power_platform/templates/`
-
-### Power Apps Integration
-- Custom connector setup
-- Mobile-friendly image capture
-- Batch processing interface
-- Integration formulas provided
-
-### API Endpoints
-- `POST /api/process-image`: Upload and process files
-- `POST /api/process-base64`: Process base64 images (Power Apps)
-- `POST /api/process-batch`: Batch processing
-- `GET /api/health`: Health check
-
-## ☁️ Azure Integration
-
-### Setup Azure Services
-1. **Blob Storage**: For cloud image storage
-2. **Computer Vision**: For AI analysis (optional)
-
-### Configuration
-```bash
-# Copy template and add your credentials
-cp azure/azure_config_template.json azure/azure_config.json
-```
-
-### Features
-- Cloud-based batch processing
-- Automatic image analysis and tagging
-- OCR text detection
-- Scalable storage solutions
-
-## 🖥️ GUI Usage
-
-### Basic Workflow
-1. **Launch**: Run `python gui_app.py`
-2. **Configure**: Set input/output folders and watermark
-3. **Adjust Settings**: Quality, opacity, dimensions
-4. **Scan**: Check how many files will be processed
-5. **Process**: Start the batch operation
-6. **Monitor**: Watch progress and results
-
-### Advanced Features
-- **Presets**: Save and load common configurations
-- **Preview**: Scan folders before processing
-- **Progress Tracking**: Real-time processing updates
-- **Error Reporting**: Detailed failure information
-
-## 💻 Command Line Usage
-
-### Basic Examples
-```bash
-# Simple processing
-python cli.py -i "C:\Photos" -o "C:\WebPhotos" -w "logo.png"
-
-# Custom quality and format
-python cli.py -i input -o output -w watermark.png --quality 90 --format WEBP
-
-# Use configuration file
-python cli.py --config config/high_quality_config.yaml
-
-# Dry run (see what would be processed)
-python cli.py -i input -o output --dry-run
-```
-
-### Advanced Options
-```bash
-# Custom dimensions
-python cli.py -i input -o output --max-width 2560 --max-height 1440
-
-# Watermark customization
-python cli.py -i input -o output --opacity 0.5 --position center --scale 0.3
-
-# Performance tuning
-python cli.py -i input -o output --max-workers 8 --no-multiprocessing
-```
-
-## 🔍 Troubleshooting
-
-### Common Issues
-
-#### "No files found"
-- Check input folder path
-- Verify supported formats: PDF, JPG, PNG, BMP, TIFF
-- Ensure files aren't corrupted
-
-#### "Watermark not applied"
-- Verify watermark file exists and is PNG format
-- Check watermark path in configuration
-- Ensure watermark has transparency
-
-#### "Processing failed"
-- Check available disk space
-- Verify write permissions to output folder
-- Review logs in `logs/` folder
-
-#### Performance Issues
-- Reduce `max_workers` if system becomes unresponsive
-- Use SSD storage for better I/O performance
-- Increase available RAM
-
-### Log Files
-Detailed logs are stored in `logs/image_processor_{timestamp}.log`
-
-## 🚀 Deployment Options
-
-### Local Development
-- Run directly with Python
-- Use virtual environments for isolation
-
-### Windows Service
-Convert to a Windows service for background processing:
-```bash
-# Install service dependencies
-pip install pywin32
-
-# Create service wrapper (example in deployment/)
-```
-
-### Docker Container
-```dockerfile
-# See deployment/Dockerfile for complete setup
-FROM python:3.11-slim
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-```
-
-### Azure Functions
-Deploy API endpoints as serverless functions for scalable cloud processing.
-
-## 🔐 Security Considerations
-
-### File Handling
-- Input validation for all file types
-- Size limits to prevent memory issues
-- Sandboxed processing environment
-
-### API Security
-- Authentication headers
-- Rate limiting
-- Input sanitization
-- HTTPS enforcement
-
-### Azure Integration
-- Managed identities for authentication
-- Private endpoints for storage
-- Key Vault for secret management
-
-## 📈 Performance Optimization
-
-### Hardware Optimization
-- **CPU**: Utilizes all available cores with multiprocessing
-- **Memory**: Efficient image handling with streaming
-- **Storage**: SSD recommended for faster I/O
-
-### Processing Tips
-- Use WEBP format for best compression
-- Batch similar-sized images together
-- Consider GPU acceleration for large volumes
-
-### Scaling
-- Azure cloud processing for unlimited scale
-- Load balancing for API endpoints
-- Distributed storage for large datasets
-
-## 🛠️ Development
-
-### Project Structure
-```
-ImageProcessorMJWProject/
-├── src/                    # Core processing logic
-├── gui_app.py             # GUI application
-├── cli.py                 # Command line interface
-├── config/                # Configuration presets
-├── azure/                 # Azure integration
-├── power_platform/        # Power Platform templates
-├── watermarks/           # Watermark images
-├── logs/                 # Application logs
-└── requirements.txt      # Dependencies
-```
-
-### Adding Features
-- Extend `ImageProcessor` class for new functionality
-- Add new configuration options to `ProcessingConfig`
-- Create custom GUI tabs for advanced features
-
-### Testing
-```bash
-# Run with test images
-python cli.py -i test_images -o test_output --dry-run
-
-# Check processing quality
-python -c "from src.image_processor import ImageProcessor; ..."
-```
-
-## 🎮 Use Cases
-
-### Photography Studios
-- Batch watermarking for client galleries
-- Web optimization for online portfolios
-- Automated copyright protection
-
-### E-commerce
-- Product image standardization
-- Watermarking for brand protection
-- Multi-format output for different platforms
-
-### Marketing Agencies
-- Social media image preparation
-- Client asset management
-- Brand compliance automation
-
-### Enterprise Content
-- Document processing workflows
-- SharePoint integration
-- Automated archival systems
-
-## 📚 API Reference
-
-### ProcessingConfig Class
-```python
-config = ProcessingConfig(
-    input_folder="input",
-    output_folder="output", 
-    watermark_path="logo.png",
-    jpeg_quality=85,
-    watermark_opacity=0.3,
-    max_width=1920,
-    max_height=1080,
-    output_format="JPEG"
-)
-```
-
-### ImageProcessor Class
-```python
-processor = ImageProcessor(config)
-results = processor.process_folder()
-```
-
-### HTTP API Endpoints
-- `POST /api/process-image`: Multipart file upload
-- `POST /api/process-base64`: JSON with base64 image
-- `GET /api/config`: Get current configuration
-- `POST /api/config`: Update configuration
-
-## 🤝 Contributing
-
-### Development Setup
-1. Fork the repository
-2. Create feature branch
-3. Install development dependencies
-4. Run tests before submitting
-
-### Code Style
-- Follow PEP 8 conventions
-- Add type hints for all functions
-- Include comprehensive docstrings
-- Write unit tests for new features
-
-## 📄 License
-
-This project is provided as-is for educational and commercial use. Please ensure you have proper rights to any watermark images used.
-
-## 📞 Support
-
-### Documentation
-- Check this README for common solutions
-- Review configuration examples
-- Examine log files for error details
-
-### Community
-- Report issues with detailed error information
-- Include system specifications and log excerpts
-- Provide sample images (without sensitive content)
-
----
-
-**Built with ❤️ for automated image processing workflows**
+Windows and macOS wrappers are provided in `build_windows.bat` and `build_macos.sh`.
+
+## Key safeguards
+
+- image source byte, decoded pixel and PDF page limits;
+- no raw EXIF/GPS in public derivatives;
+- bounded processing concurrency (maximum four workers);
+- deterministic catalog-based production filenames and idempotency keys;
+- collision-free archive jobs: one canonical catalog ID per manifest;
+- atomic files and manifests, followed by reopen/decode and checksum verification;
+- no Fedora, database, Cloudflare or SharePoint credentials in this application.

@@ -10,23 +10,25 @@ echo   Image Processor Pro - Windows Build
 echo ============================================
 echo.
 
-REM Check if virtual environment exists
+REM Use the project virtual environment when available.
 if exist ".venv\Scripts\activate.bat" (
     echo Activating virtual environment...
     call .venv\Scripts\activate.bat
 ) else (
-    echo No virtual environment found. Using system Python.
+    echo ERROR: .venv is required for a reproducible build.
+    echo Create it with: py -3.13 -m venv .venv
+    exit /b 1
 )
 
-REM Install/upgrade PyInstaller
+REM Install the project's pinned GUI and build dependencies, then use the
+REM maintained Python build entrypoint. No missing .spec file is required.
 echo.
-echo Installing PyInstaller...
-pip install pyinstaller --upgrade --quiet
+echo Installing locked project dependencies...
+python -m pip install -e ".[gui,build]"
+if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
 
-REM Run the build
-echo.
 echo Building application...
-pyinstaller ImageProcessorPro.spec --noconfirm
+python build_app.py
 
 if %ERRORLEVEL% EQU 0 (
     echo.
@@ -43,14 +45,11 @@ if %ERRORLEVEL% EQU 0 (
     echo   Zip the entire 'dist\ImageProcessorPro' folder
     echo.
     
-    REM Open the dist folder
-    explorer dist\ImageProcessorPro
 ) else (
     echo.
     echo ============================================
     echo   BUILD FAILED!
     echo ============================================
     echo Check the error messages above.
+    exit /b %ERRORLEVEL%
 )
-
-pause

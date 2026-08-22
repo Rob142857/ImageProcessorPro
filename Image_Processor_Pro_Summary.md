@@ -530,3 +530,6 @@ You now have a **complete, production-ready image processing solution** that per
 **Status:** ✅ Complete and Ready for Production  
 **Performance:** Optimized for 32-core, 31GB RAM system  
 **Recommendation:** Begin with web_optimized_config.yaml for perfect web compression
+> **Legacy project snapshot:** this document predates the 2.0 production manifest,
+> security and dependency work. Use `README.md` and `docs/PRODUCTION_WORKFLOW.md`
+> for current operational guidance.

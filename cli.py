@@ -13,6 +13,8 @@ Optimized for Michael J Wright Estate web image processing:
 """
 
 import argparse
+import hashlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -22,6 +24,7 @@ from typing import Optional
 # Add src to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 from image_processor import ImageProcessor, ProcessingConfig
+from job_manifest import ManifestValidationError, load_job_manifest
 from loguru import logger
 
 
@@ -112,7 +115,7 @@ Examples:
     parser.add_argument('--max-height', type=int, default=1080,
                        help='Maximum output height - legacy (default: 1080)')
     parser.add_argument('--no-preserve-aspect', action='store_true',
-                       help='Do not preserve aspect ratio when resizing')
+                       help='Legacy flag; non-proportional artwork resizing is rejected')
     
     # PDF settings
     parser.add_argument('--pdf-dpi', type=int, default=200,
@@ -131,6 +134,10 @@ Examples:
                        help='Save current settings to YAML file and exit')
     parser.add_argument('--generate-config', type=str,
                        help='Generate a default configuration file and exit')
+    parser.add_argument('--job-manifest', type=str,
+                       help='Run exactly one validated production derivative job from a JSON manifest')
+    parser.add_argument('--output-dir', type=str,
+                       help='Required with --job-manifest; destination for the derivative and sidecar')
     
     # Other options
     parser.add_argument('--dry-run', action='store_true',
@@ -164,6 +171,12 @@ def setup_logging(verbose: bool = False, quiet: bool = False) -> None:
 def validate_args(args: argparse.Namespace) -> bool:
     """Validate command line arguments."""
     
+    if args.job_manifest:
+        if not args.output_dir:
+            logger.error("--output-dir is required with --job-manifest")
+            return False
+        return True
+
     if args.config:
         # Config file will be validated when loaded
         return True
@@ -205,6 +218,98 @@ def validate_args(args: argparse.Namespace) -> bool:
         return False
     
     return True
+
+
+MJW_WEB_V2_VERSION = '2.0.0'
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_manifest_profile(config_path: Optional[str], profile_id: str, profile_version: str) -> ProcessingConfig:
+    if profile_id != 'mjw-web-v2' or profile_version != MJW_WEB_V2_VERSION:
+        raise ManifestValidationError('Only the approved mjw-web-v2 profile version 2.0.0 may run in manifest mode')
+    profile_path = Path(config_path) if config_path else Path(__file__).parent / 'config' / 'mjw-web-v2.yaml'
+    config = ProcessingConfig.load_from_file(str(profile_path))
+    if (config.output_format.upper() != 'JPEG' or config.long_edge_pixels != 2400
+            or config.jpeg_quality != 88 or config.target_max_size_kb != 2500
+            or config.preserve_metadata or config.metadata_policy != 'public' or not config.convert_to_srgb
+            or config.output_dpi != 72 or config.create_subfolder
+            or not config.use_text_watermark
+            or config.watermark_text != '© Michael J Wright Estate'
+            or config.text_watermark_opacity != 30
+            or config.text_font_size_ratio != 0.012
+            or config.text_rotation_angle != -30 or config.text_spacing_ratio != 1.8
+            or config.watermark_path
+            or config.use_multiprocessing
+            or config.max_workers != 4
+            or config.max_pixels != 80_000_000
+            or config.max_source_bytes != 2 * 1024 * 1024 * 1024):
+        raise ManifestValidationError('The selected configuration does not match the locked mjw-web-v2 production profile')
+    return config
+
+
+def run_job_manifest(manifest_path: str, config_path: Optional[str], output_dir: str) -> int:
+    """Run one immutable manifest job and verify its renderer sidecar."""
+    try:
+        job = load_job_manifest(manifest_path)
+        config = _load_manifest_profile(config_path, job.profile_id, job.profile_version)
+        destination = Path(output_dir).expanduser().resolve()
+        source_directory = job.input_path.parent.resolve()
+        if destination == source_directory or destination.is_relative_to(source_directory):
+            raise ManifestValidationError(
+                'output-dir must be outside the staged originals directory'
+            )
+        destination.mkdir(parents=True, exist_ok=True)
+        output_path = destination / job.output_filename
+        sidecar_path = output_path.with_suffix(output_path.suffix + '.json')
+        if output_path.exists() != sidecar_path.exists():
+            raise ManifestValidationError(
+                f'unpaired existing output/sidecar collision for {output_path.name}'
+            )
+        config.input_folder = str(job.input_path.parent)
+        config.output_folder = str(destination)
+        config.create_subfolder = False
+        config.use_multiprocessing = False
+        processor = ImageProcessor(config)
+
+        provenance = job.provenance()
+        if not processor.process_single_image(str(job.input_path), str(output_path), provenance=provenance):
+            logger.error('Derivative rendering failed for {}', job.catalog_id)
+            return 1
+        if not output_path.is_file():
+            logger.error('Renderer reported success but did not create {}', output_path.name)
+            return 1
+
+        if not sidecar_path.is_file():
+            logger.error('Renderer did not create the required fixity sidecar {}', sidecar_path.name)
+            return 1
+        sidecar = json.loads(sidecar_path.read_text(encoding='utf-8'))
+        current_source_sha256 = _sha256(job.input_path)
+        if not (
+            sidecar.get('schemaVersion') == 'mjw.image-derivative.v1'
+            and sidecar.get('provenance', {}).get('catalogId') == job.catalog_id
+            and sidecar.get('provenance', {}).get('idempotencyKey') == job.idempotency_key
+            and current_source_sha256 == job.source_sha256
+            and sidecar.get('input', {}).get('sha256') == job.source_sha256
+            and sidecar.get('output', {}).get('filename') == output_path.name
+            and sidecar.get('output', {}).get('sha256') == _sha256(output_path)
+        ):
+            logger.error('Renderer sidecar verification failed for {}', job.catalog_id)
+            return 1
+        logger.info('Derivative and manifest sidecar verified for {}', job.catalog_id)
+        return 0
+    except ManifestValidationError as error:
+        logger.error('Invalid production job manifest: {}', error)
+        return 2
+    except Exception as error:
+        logger.error('Production manifest job failed: {}', error)
+        return 1
 
 
 def args_to_config(args: argparse.Namespace) -> ProcessingConfig:
@@ -333,7 +438,7 @@ def run_dry_run(processor: ImageProcessor) -> None:
     else:
         logger.info("Watermark: None")
     
-    logger.info(f"Multiprocessing: {processor.config.use_multiprocessing}")
+    logger.info(f"Parallel batch workers enabled: {processor.config.use_multiprocessing}")
     
     if processor.config.max_workers:
         logger.info(f"Max workers: {processor.config.max_workers}")
@@ -360,6 +465,11 @@ def main():
     if args.generate_config:
         generate_default_config(args.generate_config)
         return 0
+
+    if args.job_manifest:
+        if not validate_args(args):
+            return 2
+        return run_job_manifest(args.job_manifest, args.config, args.output_dir)
     
     # Load configuration
     if args.config:

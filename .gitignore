@@ -44,6 +44,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+/tests.pytest-*/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -123,6 +124,7 @@ desktop.ini
 
 # Azure credentials (if any)
 .azure/
+config/azure_config.json
 *credentials*
 *secrets*
 

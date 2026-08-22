@@ -30,31 +30,16 @@ fi
 echo "Activating virtual environment..."
 source .venv/bin/activate
 
-# Install dependencies
+# Install the project's pinned GUI and build dependencies.
 echo ""
 echo "Installing dependencies..."
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# Install/upgrade PyInstaller
-echo ""
-echo "Installing PyInstaller..."
-pip install pyinstaller --upgrade
+python -m pip install -e '.[gui,build]'
 
 # Run the build
 echo ""
 echo "Building application..."
 echo "Current directory: $(pwd)"
-echo "Looking for: ImageProcessorPro.spec"
-
-if [ ! -f "ImageProcessorPro.spec" ]; then
-    echo "ERROR: ImageProcessorPro.spec not found in current directory!"
-    echo "Files in current directory:"
-    ls -la
-    exit 1
-fi
-
-pyinstaller ImageProcessorPro.spec --noconfirm
+python build_app.py
 
 if [ $? -eq 0 ]; then
     echo ""
@@ -85,10 +70,6 @@ if [ $? -eq 0 ]; then
         fi
     fi
     
-    # Open the dist folder
-    if command -v open &> /dev/null; then
-        open dist/
-    fi
 else
     echo ""
     echo "============================================"

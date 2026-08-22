@@ -13,7 +13,11 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 import tempfile
 import base64
-from datetime import datetime
+import binascii
+import hmac
+import io
+from datetime import datetime, timezone
+from PIL import Image, UnidentifiedImageError
 
 # Flask for creating HTTP API endpoints
 try:
@@ -39,23 +43,36 @@ class PowerPlatformAPI:
         self.app = Flask(__name__)
         self.config = config
         self.processor = ImageProcessor(config)
+        self.api_token = os.environ.get('IMAGE_PROCESSOR_API_TOKEN', '')
+        self.allow_config_mutation = os.environ.get('IMAGE_PROCESSOR_ALLOW_CONFIG_MUTATION', '').lower() == 'true'
+        self.max_upload_bytes = int(os.environ.get('IMAGE_PROCESSOR_MAX_UPLOAD_BYTES', 50 * 1024 * 1024))
         
         # Configure upload settings
-        self.app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
-        self.ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.pdf'}
+        self.app.config['MAX_CONTENT_LENGTH'] = self.max_upload_bytes
+        self.ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
         
         self.setup_routes()
     
     def setup_routes(self):
         """Setup API routes for Power Platform integration."""
+
+        @self.app.before_request
+        def require_api_token():
+            if request.path == '/api/health':
+                return None
+            supplied = request.headers.get('Authorization', '')
+            expected = f'Bearer {self.api_token}' if self.api_token else ''
+            if not expected or not hmac.compare_digest(supplied, expected):
+                return jsonify({'error': {'code': 'unauthorized', 'message': 'Authentication is required.'}}), 401
+            return None
         
         @self.app.route('/api/health', methods=['GET'])
         def health_check():
             """Health check endpoint."""
             return jsonify({
                 'status': 'healthy',
-                'timestamp': datetime.utcnow().isoformat(),
-                'version': '1.0.0'
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'version': '2.0.0'
             })
         
         @self.app.route('/api/process-image', methods=['POST'])
@@ -73,6 +90,12 @@ class PowerPlatformAPI:
                 # Validate file extension
                 if not self.allowed_file(file.filename):
                     return jsonify({'error': 'File type not supported'}), 400
+                data = file.read()
+                if len(data) > self.max_upload_bytes:
+                    return jsonify({'error': {'code': 'payload_too_large', 'message': 'File exceeds the configured limit.'}}), 413
+                if not self.verify_uploaded_content(data, file.filename):
+                    return jsonify({'error': {'code': 'invalid_file', 'message': 'File content is not a valid supported still image.'}}), 400
+                file.stream.seek(0)
                 
                 # Get processing options from request
                 options = self.get_processing_options(request)
@@ -85,9 +108,11 @@ class PowerPlatformAPI:
                 else:
                     return jsonify(result), 500
                     
-            except Exception as e:
-                logger.error(f"API error processing image: {e}")
-                return jsonify({'error': str(e)}), 500
+            except ValueError as error:
+                return jsonify({'error': {'code': 'invalid_options', 'message': str(error)}}), 400
+            except Exception:
+                logger.exception("API error processing image")
+                return jsonify({'error': {'code': 'processing_failed', 'message': 'Image processing failed.'}}), 500
         
         @self.app.route('/api/process-batch', methods=['POST'])
         def process_batch_images():
@@ -103,6 +128,11 @@ class PowerPlatformAPI:
                 results = []
                 for file in files:
                     if file.filename and self.allowed_file(file.filename):
+                        data = file.read()
+                        if len(data) > self.max_upload_bytes or not self.verify_uploaded_content(data, file.filename):
+                            results.append({'success': False, 'filename': file.filename, 'error': {'code': 'invalid_file', 'message': 'Invalid or oversized file.'}})
+                            continue
+                        file.stream.seek(0)
                         result = self.process_uploaded_file(file, options)
                         results.append(result)
                 
@@ -117,9 +147,11 @@ class PowerPlatformAPI:
                     'results': results
                 }), 200
                 
-            except Exception as e:
-                logger.error(f"API error processing batch: {e}")
-                return jsonify({'error': str(e)}), 500
+            except ValueError as error:
+                return jsonify({'error': {'code': 'invalid_options', 'message': str(error)}}), 400
+            except Exception:
+                logger.exception("API error processing batch")
+                return jsonify({'error': {'code': 'processing_failed', 'message': 'Batch processing failed.'}}), 500
         
         @self.app.route('/api/process-base64', methods=['POST'])
         def process_base64_image():
@@ -130,13 +162,20 @@ class PowerPlatformAPI:
                     return jsonify({'error': 'No image data provided'}), 400
                 
                 # Decode base64 image
+                encoded = data['image']
+                if not isinstance(encoded, str) or len(encoded) > ((self.max_upload_bytes * 4) // 3) + 8:
+                    return jsonify({'error': {'code': 'payload_too_large', 'message': 'Image payload exceeds the configured limit.'}}), 413
                 try:
-                    image_data = base64.b64decode(data['image'])
-                except Exception:
+                    image_data = base64.b64decode(encoded, validate=True)
+                except (binascii.Error, ValueError):
                     return jsonify({'error': 'Invalid base64 image data'}), 400
+                if len(image_data) > self.max_upload_bytes:
+                    return jsonify({'error': {'code': 'payload_too_large', 'message': 'Image payload exceeds the configured limit.'}}), 413
+                if not self.verify_uploaded_content(image_data, 'upload.jpg'):
+                    return jsonify({'error': {'code': 'invalid_file', 'message': 'Image content is invalid.'}}), 400
                 
                 # Get processing options
-                options = data.get('options', {})
+                options = self.normalise_options(data.get('options', {}))
                 
                 # Process the image
                 result = self.process_base64_data(image_data, options)
@@ -146,9 +185,11 @@ class PowerPlatformAPI:
                 else:
                     return jsonify(result), 500
                     
-            except Exception as e:
-                logger.error(f"API error processing base64 image: {e}")
-                return jsonify({'error': str(e)}), 500
+            except ValueError as error:
+                return jsonify({'error': {'code': 'invalid_options', 'message': str(error)}}), 400
+            except Exception:
+                logger.exception("API error processing base64 image")
+                return jsonify({'error': {'code': 'processing_failed', 'message': 'Image processing failed.'}}), 500
         
         @self.app.route('/api/config', methods=['GET', 'POST'])
         def handle_config():
@@ -157,6 +198,8 @@ class PowerPlatformAPI:
                 return jsonify(self.config.__dict__)
             
             elif request.method == 'POST':
+                if not self.allow_config_mutation:
+                    return jsonify({'error': {'code': 'config_mutation_disabled', 'message': 'Configuration updates are disabled.'}}), 403
                 try:
                     data = request.get_json()
                     # Update configuration
@@ -168,147 +211,112 @@ class PowerPlatformAPI:
                     self.processor = ImageProcessor(self.config)
                     
                     return jsonify({'success': True, 'message': 'Configuration updated'})
-                except Exception as e:
-                    return jsonify({'error': str(e)}), 500
+                except Exception:
+                    logger.exception("Configuration update failed")
+                    return jsonify({'error': {'code': 'config_update_failed', 'message': 'Configuration update failed.'}}), 500
     
     def allowed_file(self, filename: str) -> bool:
         """Check if file extension is allowed."""
         return Path(filename).suffix.lower() in self.ALLOWED_EXTENSIONS
+
+    def verify_uploaded_content(self, data: bytes, filename: str) -> bool:
+        """Reject disguised/corrupt image payloads before handing them to processors."""
+        suffix = Path(filename).suffix.lower()
+        try:
+            with Image.open(io.BytesIO(data)) as image:
+                image.verify()
+            return True
+        except (UnidentifiedImageError, OSError, ValueError):
+            return False
     
     def get_processing_options(self, request) -> Dict[str, Any]:
         """Extract processing options from request."""
-        form_data = request.form.to_dict()
-        
-        options = {}
-        
-        # Convert string values to appropriate types
-        if 'quality' in form_data:
-            try:
-                options['quality'] = int(form_data['quality'])
-            except ValueError:
-                pass
-        
-        if 'opacity' in form_data:
-            try:
-                options['opacity'] = float(form_data['opacity'])
-            except ValueError:
-                pass
-        
-        if 'format' in form_data:
-            options['format'] = form_data['format'].upper()
-        
-        if 'max_width' in form_data:
-            try:
-                options['max_width'] = int(form_data['max_width'])
-            except ValueError:
-                pass
-        
-        if 'max_height' in form_data:
-            try:
-                options['max_height'] = int(form_data['max_height'])
-            except ValueError:
-                pass
-        
+        return self.normalise_options(request.form.to_dict())
+
+    def normalise_options(self, raw: Any) -> Dict[str, Any]:
+        """Apply one strict option contract to multipart and JSON clients."""
+        if not isinstance(raw, dict):
+            raise ValueError("options must be an object")
+        allowed = {"quality", "opacity", "format", "max_width", "max_height"}
+        unknown = set(raw) - allowed
+        if unknown:
+            raise ValueError(f"unsupported option(s): {', '.join(sorted(unknown))}")
+
+        options: Dict[str, Any] = {}
+        try:
+            if "quality" in raw:
+                if isinstance(raw["quality"], bool): raise ValueError
+                options["quality"] = int(raw["quality"])
+                if not 1 <= options["quality"] <= 100: raise ValueError
+            if "opacity" in raw:
+                if isinstance(raw["opacity"], bool): raise ValueError
+                options["opacity"] = float(raw["opacity"])
+                if not 0 <= options["opacity"] <= 1: raise ValueError
+            if "format" in raw:
+                if not isinstance(raw["format"], str): raise ValueError
+                options["format"] = raw["format"].upper()
+                if options["format"] not in {"JPEG", "PNG", "WEBP"}: raise ValueError
+            for field in ("max_width", "max_height"):
+                if field in raw:
+                    if isinstance(raw[field], bool): raise ValueError
+                    options[field] = int(raw[field])
+                    if not 1 <= options[field] <= 10000: raise ValueError
+        except (TypeError, ValueError) as error:
+            raise ValueError("options contain an invalid value") from error
         return options
     
     def process_uploaded_file(self, file, options: Dict[str, Any]) -> Dict[str, Any]:
         """Process an uploaded file."""
+        input_path = output_path = None
         try:
-            # Create temporary files
             with tempfile.NamedTemporaryFile(suffix=Path(file.filename).suffix, delete=False) as temp_input:
+                input_path = temp_input.name
                 file.save(temp_input.name)
-                
-                # Apply options to config
-                temp_config = self.apply_options_to_config(options)
-                temp_processor = ImageProcessor(temp_config)
-                
-                with tempfile.NamedTemporaryFile(suffix=f".{temp_config.output_format.lower()}", delete=False) as temp_output:
-                    # Process the image
-                    success = temp_processor.process_single_image(temp_input.name, temp_output.name)
-                    
-                    if success:
-                        # Read processed image and encode as base64
-                        with open(temp_output.name, 'rb') as f:
-                            processed_data = f.read()
-                        
-                        encoded_image = base64.b64encode(processed_data).decode('utf-8')
-                        
-                        # Cleanup temp files
-                        os.unlink(temp_input.name)
-                        os.unlink(temp_output.name)
-                        
-                        return {
-                            'success': True,
-                            'filename': file.filename,
-                            'processed_image': encoded_image,
-                            'format': temp_config.output_format,
-                            'size': len(processed_data)
-                        }
-                    else:
-                        # Cleanup temp files
-                        os.unlink(temp_input.name)
-                        os.unlink(temp_output.name)
-                        
-                        return {
-                            'success': False,
-                            'filename': file.filename,
-                            'error': 'Processing failed'
-                        }
-                        
-        except Exception as e:
-            return {
-                'success': False,
-                'filename': file.filename,
-                'error': str(e)
-            }
+            temp_config = self.apply_options_to_config(options)
+            temp_processor = ImageProcessor(temp_config)
+            with tempfile.NamedTemporaryFile(suffix=f".{temp_config.output_format.lower()}", delete=False) as temp_output:
+                output_path = temp_output.name
+            if not temp_processor.process_single_image(input_path, output_path):
+                return {'success': False, 'filename': file.filename, 'error': {'code': 'processing_failed', 'message': 'Processing failed.'}}
+            with open(output_path, 'rb') as output_file:
+                processed_data = output_file.read()
+            return {'success': True, 'filename': file.filename, 'processed_image': base64.b64encode(processed_data).decode('utf-8'), 'format': temp_config.output_format, 'size': len(processed_data)}
+        except Exception:
+            logger.exception("Uploaded file processing failed")
+            return {'success': False, 'filename': file.filename, 'error': {'code': 'processing_failed', 'message': 'Processing failed.'}}
+        finally:
+            sidecar_path = f"{output_path}.json" if output_path else None
+            for path in (input_path, output_path, sidecar_path):
+                if path:
+                    try: os.unlink(path)
+                    except FileNotFoundError: pass
     
     def process_base64_data(self, image_data: bytes, options: Dict[str, Any]) -> Dict[str, Any]:
         """Process base64 image data."""
+        input_path = output_path = None
         try:
-            # Apply options to config
             temp_config = self.apply_options_to_config(options)
             temp_processor = ImageProcessor(temp_config)
-            
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_input:
+                input_path = temp_input.name
                 temp_input.write(image_data)
                 temp_input.flush()
-                
-                with tempfile.NamedTemporaryFile(suffix=f".{temp_config.output_format.lower()}", delete=False) as temp_output:
-                    # Process the image
-                    success = temp_processor.process_single_image(temp_input.name, temp_output.name)
-                    
-                    if success:
-                        # Read processed image and encode as base64
-                        with open(temp_output.name, 'rb') as f:
-                            processed_data = f.read()
-                        
-                        encoded_image = base64.b64encode(processed_data).decode('utf-8')
-                        
-                        # Cleanup temp files
-                        os.unlink(temp_input.name)
-                        os.unlink(temp_output.name)
-                        
-                        return {
-                            'success': True,
-                            'processed_image': encoded_image,
-                            'format': temp_config.output_format,
-                            'size': len(processed_data)
-                        }
-                    else:
-                        # Cleanup temp files
-                        os.unlink(temp_input.name)
-                        os.unlink(temp_output.name)
-                        
-                        return {
-                            'success': False,
-                            'error': 'Processing failed'
-                        }
-                        
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            with tempfile.NamedTemporaryFile(suffix=f".{temp_config.output_format.lower()}", delete=False) as temp_output:
+                output_path = temp_output.name
+            if not temp_processor.process_single_image(input_path, output_path):
+                return {'success': False, 'error': {'code': 'processing_failed', 'message': 'Processing failed.'}}
+            with open(output_path, 'rb') as output_file:
+                processed_data = output_file.read()
+            return {'success': True, 'processed_image': base64.b64encode(processed_data).decode('utf-8'), 'format': temp_config.output_format, 'size': len(processed_data)}
+        except Exception:
+            logger.exception("Base64 image processing failed")
+            return {'success': False, 'error': {'code': 'processing_failed', 'message': 'Processing failed.'}}
+        finally:
+            sidecar_path = f"{output_path}.json" if output_path else None
+            for path in (input_path, output_path, sidecar_path):
+                if path:
+                    try: os.unlink(path)
+                    except FileNotFoundError: pass
     
     def apply_options_to_config(self, options: Dict[str, Any]) -> ProcessingConfig:
         """Apply processing options to create a temporary config."""
@@ -329,7 +337,7 @@ class PowerPlatformAPI:
         )
         return temp_config
     
-    def run(self, host='0.0.0.0', port=5000, debug=False):
+    def run(self, host='127.0.0.1', port=5000, debug=False):
         """Run the Flask API server."""
         logger.info(f"Starting Power Platform API server on {host}:{port}")
         self.app.run(host=host, port=port, debug=debug)
@@ -345,6 +353,7 @@ def create_power_automate_templates():
     email_flow_template = {
         "displayName": "Process Email Attachments - Image Watermarking",
         "description": "Automatically process image attachments from emails, apply watermarks, and save to SharePoint",
+        "secureParameters": {"ImageProcessorApiToken": {"type": "SecureString"}},
         "triggers": [
             {
                 "type": "When a new email arrives (V3)",
@@ -379,7 +388,8 @@ def create_power_automate_templates():
                         "method": "POST",
                         "uri": "https://your-api-server.com/api/process-base64",
                         "headers": {
-                            "Content-Type": "application/json"
+                            "Content-Type": "application/json",
+                            "Authorization": "Bearer @{parameters('ImageProcessorApiToken')}"
                         },
                         "body": {
                             "image": "@item()?['contentBytes']",
@@ -417,6 +427,7 @@ def create_power_automate_templates():
     sharepoint_flow_template = {
         "displayName": "SharePoint Image Processing Workflow",
         "description": "Process images uploaded to SharePoint library with watermarks",
+        "secureParameters": {"ImageProcessorApiToken": {"type": "SecureString"}},
         "triggers": [
             {
                 "type": "When a file is created (properties only)",
@@ -452,7 +463,8 @@ def create_power_automate_templates():
                 "method": "POST",
                 "uri": "https://your-api-server.com/api/process-base64",
                 "headers": {
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer @{parameters('ImageProcessorApiToken')}"
                 },
                 "body": {
                     "image": "@base64(body('Get_file_content'))",
@@ -482,6 +494,7 @@ def create_power_automate_templates():
     onedrive_flow_template = {
         "displayName": "OneDrive Batch Image Processing",
         "description": "Process all images in a OneDrive folder on schedule",
+        "secureParameters": {"ImageProcessorApiToken": {"type": "SecureString"}},
         "triggers": [
             {
                 "type": "Recurrence",
@@ -515,6 +528,10 @@ def create_power_automate_templates():
                         "type": "HTTP",
                         "method": "POST",
                         "uri": "https://your-api-server.com/api/process-base64",
+                        "headers": {
+                            "Content-Type": "application/json",
+                            "Authorization": "Bearer @{parameters('ImageProcessorApiToken')}"
+                        },
                         "body": {
                             "image": "@base64(body('Get_file_content'))",
                             "options": {
@@ -606,8 +623,8 @@ This folder contains Power Automate flow templates for automated image processin
 
 ## Security Considerations
 
-- Use HTTPS for the API server
-- Implement proper authentication
+- Keep the API on localhost unless it is behind an authenticated HTTPS gateway
+- Store ImageProcessorApiToken as a Power Platform secure parameter
 - Validate file types and sizes
 - Set up proper logging and monitoring
 
@@ -857,8 +874,8 @@ If(
 ### 7. Security Considerations
 
 - Validate file sizes before upload
-- Implement user authentication
-- Use secure API endpoints (HTTPS)
+- Supply the required Bearer token from a secure Power Platform parameter
+- Expose the API only through an authenticated HTTPS gateway
 - Sanitize user inputs
 """
     

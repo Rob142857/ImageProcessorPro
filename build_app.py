@@ -10,16 +10,18 @@ import shutil
 from pathlib import Path
 
 APP_NAME = "ImageProcessorPro"
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 
-def install_pyinstaller():
-    """Install PyInstaller if not already installed."""
+def require_pyinstaller():
+    """Fail clearly when the locked build dependencies are not installed."""
     try:
         import PyInstaller
-        print("PyInstaller is already installed.")
+        print(f"Using PyInstaller {PyInstaller.__version__}.")
     except ImportError:
-        print("Installing PyInstaller...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
+        raise SystemExit(
+            "PyInstaller is not installed. Run: "
+            f'"{sys.executable}" -m pip install -e ".[gui,build]"'
+        )
 
 def build_windows():
     """Build Windows executable."""
@@ -33,16 +35,17 @@ def build_windows():
         "--name", APP_NAME,
         "--onedir",  # Create a folder with exe and dependencies (more reliable)
         "--windowed",  # No console window
-        "--icon", "assets/icon.ico" if os.path.exists("assets/icon.ico") else "NONE",
         "--add-data", "config;config",  # Include config folder
         "--add-data", "src;src",  # Include src folder
         "--hidden-import", "PIL._tkinter_finder",
         "--hidden-import", "customtkinter",
         "--collect-all", "customtkinter",
         "--collect-all", "PIL",
-        "--noconfirm",
+        "--noconfirm", "--clean",
         "gui_app.py"
     ]
+    if os.path.exists("assets/icon.ico"):
+        cmd[5:5] = ["--icon", "assets/icon.ico"]
     
     subprocess.run(cmd, check=True)
     
@@ -64,17 +67,18 @@ def build_macos():
         "--name", APP_NAME,
         "--onedir",
         "--windowed",
-        "--icon", "assets/icon.icns" if os.path.exists("assets/icon.icns") else "NONE",
         "--add-data", "config:config",  # macOS uses : instead of ;
         "--add-data", "src:src",
         "--hidden-import", "PIL._tkinter_finder",
         "--hidden-import", "customtkinter",
         "--collect-all", "customtkinter",
         "--collect-all", "PIL",
-        "--noconfirm",
+        "--noconfirm", "--clean",
         "--osx-bundle-identifier", "com.mjwestate.imageprocessorpro",
         "gui_app.py"
     ]
+    if os.path.exists("assets/icon.icns"):
+        cmd[5:5] = ["--icon", "assets/icon.icns"]
     
     subprocess.run(cmd, check=True)
     
@@ -115,8 +119,8 @@ def main():
     # Change to script directory
     os.chdir(Path(__file__).parent)
     
-    # Install PyInstaller
-    install_pyinstaller()
+    # Build dependencies are installed explicitly from the project lock/pins.
+    require_pyinstaller()
     
     # Build based on platform
     if sys.platform == "win32":

@@ -1,4 +1,4 @@
-# Fast web optimization for social media and web use
+# Legacy fast web preset. Production jobs use mjw-web-v2.yaml.
 # Optimized for speed and smaller file sizes
 
 input_folder: "input"

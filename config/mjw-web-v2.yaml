@@ -1,0 +1,41 @@
+# Immutable production rendering profile. Job manifests must name this exact profile/version.
+# Output is a progressive JPEG and the renderer fails if the target size cannot be met.
+input_folder: ''
+output_folder: ''
+watermark_path: ''
+jpeg_quality: 88
+png_compression: 6
+webp_quality: 88
+target_max_size_kb: 2500
+preserve_metadata: false
+metadata_policy: public
+use_text_watermark: true
+watermark_text: '© Michael J Wright Estate'
+text_font_size_ratio: 0.012
+text_watermark_opacity: 30
+text_rotation_angle: -30
+text_spacing_ratio: 1.8
+use_text_outline: false
+watermark_opacity: 0.2
+watermark_position: bottom-right
+watermark_scale: 0.15
+use_tiled_watermark: true
+tile_size_ratio: 0.14
+tile_spacing_ratio: 1.8
+tile_opacity_reduction: 0.65
+long_edge_pixels: 2400
+output_dpi: 72
+convert_to_srgb: true
+web_output_suffix: '_web'
+create_subfolder: false
+subfolder_name: 'web_optimized'
+max_width: 2400
+max_height: 2400
+output_format: JPEG
+preserve_aspect_ratio: true
+use_multiprocessing: false
+max_workers: 4
+pdf_dpi: 200
+max_pixels: 80000000
+max_pdf_pages: 100
+max_source_bytes: 2147483648

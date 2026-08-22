@@ -8,27 +8,39 @@ Provides cloud processing capabilities using Azure services.
 import os
 import sys
 from typing import Optional, List, Dict, Any, Callable
-import asyncio
 import tempfile
+import time
+import warnings
 from pathlib import Path
 import json
 
-# Azure SDK imports
+# Azure Blob is the only supported production integration in this module.
 try:
-    from azure.storage.blob import BlobServiceClient, BlobClient
+    from azure.storage.blob import BlobServiceClient, ContentSettings
+    from azure.core.exceptions import ResourceExistsError
+    BLOB_STORAGE_AVAILABLE = True
+except ImportError:
+    BLOB_STORAGE_AVAILABLE = False
+
+try:
+    from azure.identity import DefaultAzureCredential
+    AZURE_IDENTITY_AVAILABLE = True
+except ImportError:
+    AZURE_IDENTITY_AVAILABLE = False
+
+# Kept only for compatibility with existing installations. Azure Image Analysis
+# is on a published retirement path and must not be selected for new workflows.
+try:
     from azure.cognitiveservices.vision.computervision import ComputerVisionClient
     from azure.cognitiveservices.vision.computervision.models import OperationStatusCodes
     from msrest.authentication import CognitiveServicesCredentials
-    AZURE_AVAILABLE = True
+    LEGACY_VISION_AVAILABLE = True
 except ImportError:
-    AZURE_AVAILABLE = False
+    LEGACY_VISION_AVAILABLE = False
 
 # Core dependencies
 from loguru import logger
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import requests
-from PIL import Image
-import io
+from concurrent.futures import ThreadPoolExecutor
 
 # Local imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -38,21 +50,34 @@ from image_processor import ImageProcessor, ProcessingConfig
 class AzureBlobStorage:
     """Azure Blob Storage integration for image processing."""
     
-    def __init__(self, connection_string: str, container_name: str = "images"):
-        if not AZURE_AVAILABLE:
+    def __init__(self, connection_string: Optional[str] = None,
+                 container_name: str = "images", *,
+                 account_url: Optional[str] = None,
+                 credential: Any = None):
+        if not BLOB_STORAGE_AVAILABLE:
             raise ImportError("Azure SDK not available. Install with: pip install azure-storage-blob")
-        
-        self.blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+
+        if connection_string:
+            self.blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        elif account_url:
+            if credential is None:
+                if not AZURE_IDENTITY_AVAILABLE:
+                    raise ImportError("Managed identity requires the azure-identity package")
+                credential = DefaultAzureCredential()
+            self.blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
+        else:
+            raise ValueError("Provide account_url for managed identity or a legacy connection string")
+
         self.container_name = container_name
         
         # Create container if it doesn't exist
         try:
             self.blob_service_client.create_container(container_name)
-        except Exception:
-            pass  # Container might already exist
+        except ResourceExistsError:
+            pass
     
-    def upload_image(self, image_data: bytes, blob_name: str, 
-                    content_type: str = "image/jpeg") -> str:
+    def upload_image(self, image_data: bytes, blob_name: str,
+                    content_type: str = "image/jpeg", *, overwrite: bool = False) -> str:
         """Upload image to Azure Blob Storage."""
         try:
             blob_client = self.blob_service_client.get_blob_client(
@@ -61,9 +86,9 @@ class AzureBlobStorage:
             )
             
             blob_client.upload_blob(
-                image_data, 
-                overwrite=True,
-                content_settings={'content_type': content_type}
+                image_data,
+                overwrite=overwrite,
+                content_settings=ContentSettings(content_type=content_type)
             )
             
             return blob_client.url
@@ -108,11 +133,18 @@ class AzureBlobStorage:
 
 
 class AzureComputerVision:
-    """Azure Computer Vision integration for image analysis."""
+    """Deprecated compatibility wrapper; do not use for new workflows."""
     
     def __init__(self, subscription_key: str, endpoint: str):
-        if not AZURE_AVAILABLE:
+        if not LEGACY_VISION_AVAILABLE:
             raise ImportError("Azure SDK not available. Install with: pip install azure-cognitiveservices-vision-computervision")
+
+        warnings.warn(
+            "Azure Image Analysis is retiring on 2028-09-25. "
+            "This legacy integration is compatibility-only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         
         self.client = ComputerVisionClient(
             endpoint=endpoint,
@@ -150,7 +182,7 @@ class AzureComputerVision:
                 read_result = self.client.get_read_result(operation_id)
                 if read_result.status not in ['notStarted', 'running']:
                     break
-                asyncio.sleep(1)
+                time.sleep(1)
             
             # Extract text
             text_lines = []
@@ -170,6 +202,8 @@ class AzureImageProcessor:
     
     def __init__(self, config: ProcessingConfig, 
                  blob_connection_string: Optional[str] = None,
+                 blob_account_url: Optional[str] = None,
+                 blob_credential: Any = None,
                  cv_subscription_key: Optional[str] = None,
                  cv_endpoint: Optional[str] = None):
         
@@ -180,8 +214,12 @@ class AzureImageProcessor:
         self.blob_storage = None
         self.computer_vision = None
         
-        if blob_connection_string:
-            self.blob_storage = AzureBlobStorage(blob_connection_string)
+        if blob_account_url or blob_connection_string:
+            self.blob_storage = AzureBlobStorage(
+                blob_connection_string,
+                account_url=blob_account_url,
+                credential=blob_credential,
+            )
         
         if cv_subscription_key and cv_endpoint:
             self.computer_vision = AzureComputerVision(cv_subscription_key, cv_endpoint)
@@ -242,33 +280,29 @@ class AzureImageProcessor:
             # Download image
             image_data = self.blob_storage.download_image(input_blob_name)
             
-            # Process image locally
-            with tempfile.NamedTemporaryFile(suffix=".jpg") as temp_input:
-                temp_input.write(image_data)
-                temp_input.flush()
-                
-                with tempfile.NamedTemporaryFile(suffix=f".{self.config.output_format.lower()}") as temp_output:
-                    # Process the image
-                    success = self.local_processor.process_single_image(temp_input.name, temp_output.name)
-                    
-                    if success:
-                        # Upload processed image
-                        with open(temp_output.name, 'rb') as f:
-                            processed_data = f.read()
-                        
-                        output_blob_name = self._get_output_blob_name(input_blob_name)
-                        content_type = self._get_content_type(self.config.output_format)
-                        
-                        url = self.blob_storage.upload_image(
-                            processed_data, 
-                            output_blob_name, 
-                            content_type
-                        )
-                        
-                        logger.debug(f"Uploaded processed image: {url}")
-                        return True
-                    
+            # A private temporary directory avoids Windows NamedTemporaryFile
+            # locking and guarantees cleanup on every exit path.
+            with tempfile.TemporaryDirectory(prefix="mjw-image-") as temp_dir:
+                temp_input = Path(temp_dir) / (Path(input_blob_name).name or "input.jpg")
+                temp_output = Path(temp_dir) / f"output.{self.config.output_format.lower()}"
+                temp_input.write_bytes(image_data)
+
+                success = self.local_processor.process_single_image(str(temp_input), str(temp_output))
+                if not success:
                     return False
+
+                processed_data = temp_output.read_bytes()
+                output_blob_name = self._get_output_blob_name(input_blob_name)
+                content_type = self._get_content_type(self.config.output_format)
+                url = self.blob_storage.upload_image(
+                    processed_data,
+                    output_blob_name,
+                    content_type,
+                    overwrite=False,
+                )
+
+                logger.debug(f"Uploaded processed image: {url}")
+                return True
                     
         except Exception as e:
             logger.error(f"Failed to process cloud image {input_blob_name}: {e}")
@@ -374,7 +408,7 @@ class AzureImageProcessor:
             content_type = content_type_map.get(ext, 'application/octet-stream')
             
             # Upload
-            url = self.blob_storage.upload_image(file_data, blob_name, content_type)
+            url = self.blob_storage.upload_image(file_data, blob_name, content_type, overwrite=False)
             logger.debug(f"Uploaded {file_path} to {url}")
             return True
             
@@ -391,6 +425,7 @@ def load_azure_config() -> Dict[str, str]:
     # Try environment variables first
     env_vars = {
         'blob_connection_string': 'AZURE_STORAGE_CONNECTION_STRING',
+        'blob_account_url': 'AZURE_STORAGE_ACCOUNT_URL',
         'cv_subscription_key': 'AZURE_CV_SUBSCRIPTION_KEY',
         'cv_endpoint': 'AZURE_CV_ENDPOINT'
     }
@@ -418,9 +453,9 @@ def load_azure_config() -> Dict[str, str]:
 def create_azure_config_template() -> None:
     """Create a template Azure configuration file."""
     config_template = {
-        "blob_connection_string": "DefaultEndpointsProtocol=https;AccountName=your_account;AccountKey=your_key;EndpointSuffix=core.windows.net",
-        "cv_subscription_key": "your_computer_vision_key",
-        "cv_endpoint": "https://your_region.api.cognitive.microsoft.com/"
+        "blob_account_url": "https://your-account.blob.core.windows.net",
+        "authentication": "Use DefaultAzureCredential / managed identity; do not store account keys here",
+        "legacy_vision": "Deprecated; evaluate a supported replacement before enabling AI analysis"
     }
     
     os.makedirs("config", exist_ok=True)
@@ -429,7 +464,7 @@ def create_azure_config_template() -> None:
         json.dump(config_template, f, indent=2)
     
     logger.info("Created Azure config template at config/azure_config_template.json")
-    logger.info("Copy to azure_config.json and fill in your credentials")
+    logger.info("Use AZURE_STORAGE_ACCOUNT_URL with DefaultAzureCredential; do not store secrets in this file")
 
 
 if __name__ == "__main__":
@@ -439,7 +474,7 @@ if __name__ == "__main__":
     # Example of using Azure services
     azure_config = load_azure_config()
     
-    if azure_config.get('blob_connection_string'):
+    if azure_config.get('blob_account_url') or azure_config.get('blob_connection_string'):
         config = ProcessingConfig(
             watermark_path="watermarks/watermark.png",
             jpeg_quality=85,
@@ -448,11 +483,12 @@ if __name__ == "__main__":
         
         azure_processor = AzureImageProcessor(
             config,
-            blob_connection_string=azure_config['blob_connection_string'],
+            blob_connection_string=azure_config.get('blob_connection_string'),
+            blob_account_url=azure_config.get('blob_account_url'),
             cv_subscription_key=azure_config.get('cv_subscription_key'),
             cv_endpoint=azure_config.get('cv_endpoint')
         )
         
         print("Azure Image Processor initialized successfully")
     else:
-        print("Azure configuration not found. Please set up config/azure_config.json")
+        print("Azure configuration not found. Set AZURE_STORAGE_ACCOUNT_URL for managed identity.")

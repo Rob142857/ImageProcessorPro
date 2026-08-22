@@ -7,8 +7,8 @@ Built with CustomTkinter for a modern appearance.
 
 Optimized for Michael J Wright Estate web image processing:
 - Resize to 2400px long edge
-- sRGB color space, 300 DPI, 100% quality
-- Text watermark: "(C) Michael J Wright Estate | All Rights Reserved"
+- sRGB color space, 72 DPI, progressive JPEG quality 88
+- Public-safe metadata stripping and a restrained MJW Estate watermark
 - Output: filename_web.jpg in web_optimized subfolder
 """
 
@@ -18,7 +18,10 @@ import sys
 # Early error logging for debugging Mac crashes
 def log_error(msg):
     try:
-        with open(os.path.expanduser("~/Desktop/ImageProcessor_Error.log"), "a") as f:
+        state_root = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/.local/state")
+        log_dir = os.path.join(state_root, "MJWImageProcessor")
+        os.makedirs(log_dir, exist_ok=True)
+        with open(os.path.join(log_dir, "startup.log"), "a", encoding="utf-8") as f:
             f.write(f"{msg}\n")
     except:
         pass
@@ -131,7 +134,7 @@ class ImageProcessorGUI:
         # Subtitle with specs
         subtitle_label = ctk.CTkLabel(
             main_frame, 
-            text="2400px long edge • sRGB • 300 DPI • JPEG 100% • © Outlined Watermark", 
+            text="2400px long edge • sRGB • 72 DPI • progressive JPEG quality 88 • public metadata stripped",
             font=ctk.CTkFont(size=12),
             text_color="gray"
         )
@@ -159,7 +162,7 @@ class ImageProcessorGUI:
         
         ctk.CTkLabel(input_frame, text="Select Folder with Images:", font=ctk.CTkFont(weight="bold", size=14)).pack(anchor="w", padx=10, pady=(10, 5))
         
-        ctk.CTkLabel(input_frame, text="Select a folder containing paintings/images to process for web.", 
+        ctk.CTkLabel(input_frame, text="Select a folder of artwork images. PDFs are included only when PDF support is installed.",
                     text_color="gray").pack(anchor="w", padx=10, pady=(0, 5))
         
         input_path_frame = ctk.CTkFrame(input_frame)
@@ -195,7 +198,7 @@ class ImageProcessorGUI:
         
         ctk.CTkLabel(watermark_frame, text="Watermark Text:", font=ctk.CTkFont(weight="bold", size=14)).pack(anchor="w", padx=10, pady=(10, 5))
         
-        self.watermark_text_var = ctk.StringVar(value="Michael J Wright Estate | All Rights Reserved")
+        self.watermark_text_var = ctk.StringVar(value="© Michael J Wright Estate")
         self.watermark_text_entry = ctk.CTkEntry(
             watermark_frame, 
             textvariable=self.watermark_text_var, 
@@ -205,7 +208,7 @@ class ImageProcessorGUI:
         
         ctk.CTkLabel(
             watermark_frame, 
-            text="This text will be repeated diagonally across each image with light transparency.",
+            text="A restrained © watermark is repeated diagonally. Do not include personal or credential information.",
             text_color="gray",
             font=ctk.CTkFont(size=11)
         ).pack(anchor="w", padx=10, pady=(0, 10))
@@ -218,10 +221,11 @@ class ImageProcessorGUI:
         
         settings_text = """• Resize: 2400px on long edge (paintings optimized)
 • Color: sRGB color space
-• Resolution: 300 DPI, 100% JPEG quality
-• Watermark: White text with dark outline (visible on any background)
-• Format: JPEG at 75-80% quality
-• Target: < 300 KB per image
+• Resolution: 72 DPI, progressive JPEG quality 88
+• Metadata: public derivative mode strips EXIF, GPS and creator metadata
+• Watermark: restrained © MJW Estate text
+• Target: up to 2,500 KB per image
+• Processing: bounded parallel workers (maximum four)
 • Output: filename_web.jpg in web_optimized subfolder"""
         
         ctk.CTkLabel(
@@ -233,8 +237,8 @@ class ImageProcessorGUI:
         
         # Format and quality (keep for compatibility but set defaults)
         self.format_var = ctk.StringVar(value="JPEG")
-        self.quality_var = ctk.IntVar(value=100)
-        self.quality_label = ctk.CTkLabel(summary_frame, text="77")
+        self.quality_var = ctk.IntVar(value=88)
+        self.quality_label = ctk.CTkLabel(summary_frame, text="88")
     
     def create_advanced_tab(self):
         """Create advanced settings tab - text watermark options."""
@@ -250,11 +254,11 @@ class ImageProcessorGUI:
         opacity_frame.pack(fill="x", padx=10, pady=(0, 5))
         
         ctk.CTkLabel(opacity_frame, text="Opacity (lower = more subtle):").pack(side="left", padx=(10, 10))
-        self.text_opacity_var = ctk.IntVar(value=63)  # 0-255, 63 is ~25%
-        opacity_slider = ctk.CTkSlider(opacity_frame, from_=30, to=150, variable=self.text_opacity_var, number_of_steps=120)
+        self.text_opacity_var = ctk.IntVar(value=30)  # 0-255; restrained public derivative default
+        opacity_slider = ctk.CTkSlider(opacity_frame, from_=10, to=120, variable=self.text_opacity_var, number_of_steps=110)
         opacity_slider.pack(side="left", fill="x", expand=True, padx=(0, 10))
         
-        self.text_opacity_label = ctk.CTkLabel(opacity_frame, text="63")
+        self.text_opacity_label = ctk.CTkLabel(opacity_frame, text="30")
         self.text_opacity_label.pack(side="left", padx=(0, 10))
         opacity_slider.configure(command=self.update_text_opacity_label)
         
@@ -276,11 +280,11 @@ class ImageProcessorGUI:
         spacing_frame.pack(fill="x", padx=10, pady=(0, 5))
         
         ctk.CTkLabel(spacing_frame, text="Text Spacing:").pack(side="left", padx=(10, 10))
-        self.text_spacing_var = ctk.DoubleVar(value=-0.3)
-        spacing_slider = ctk.CTkSlider(spacing_frame, from_=-0.5, to=0.5, variable=self.text_spacing_var, number_of_steps=20)
+        self.text_spacing_var = ctk.DoubleVar(value=1.8)
+        spacing_slider = ctk.CTkSlider(spacing_frame, from_=0.0, to=2.0, variable=self.text_spacing_var, number_of_steps=20)
         spacing_slider.pack(side="left", fill="x", expand=True, padx=(0, 10))
         
-        self.text_spacing_label = ctk.CTkLabel(spacing_frame, text="-0.3")
+        self.text_spacing_label = ctk.CTkLabel(spacing_frame, text="1.8")
         self.text_spacing_label.pack(side="left", padx=(0, 10))
         spacing_slider.configure(command=self.update_text_spacing_label)
         
@@ -289,11 +293,11 @@ class ImageProcessorGUI:
         font_frame.pack(fill="x", padx=10, pady=(0, 10))
         
         ctk.CTkLabel(font_frame, text="Font Size Ratio:").pack(side="left", padx=(10, 10))
-        self.font_size_var = ctk.DoubleVar(value=0.015)
+        self.font_size_var = ctk.DoubleVar(value=0.012)
         font_slider = ctk.CTkSlider(font_frame, from_=0.010, to=0.05, variable=self.font_size_var, number_of_steps=40)
         font_slider.pack(side="left", fill="x", expand=True, padx=(0, 10))
         
-        self.font_size_label = ctk.CTkLabel(font_frame, text="0.015")
+        self.font_size_label = ctk.CTkLabel(font_frame, text="0.012")
         self.font_size_label.pack(side="left", padx=(0, 10))
         font_slider.configure(command=self.update_font_size_label)
         
@@ -314,7 +318,7 @@ class ImageProcessorGUI:
         
         # Target file size
         ctk.CTkLabel(dimensions_frame, text="Target Max KB:").pack(side="left", padx=(0, 10))
-        self.target_size_var = ctk.IntVar(value=5000)
+        self.target_size_var = ctk.IntVar(value=2500)
         target_size_entry = ctk.CTkEntry(dimensions_frame, textvariable=self.target_size_var, width=100)
         target_size_entry.pack(side="left", padx=(0, 10))
         
@@ -507,15 +511,21 @@ class ImageProcessorGUI:
             self.file_count_label.configure(text="Please select a valid input folder")
             return
         
-        # Create temporary processor to scan files
-        temp_config = self.get_current_config()
-        temp_processor = ImageProcessor(temp_config)
+        # Create temporary processor to scan files.
+        try:
+            temp_config = self.get_current_config()
+            temp_config.validate()
+            temp_processor = ImageProcessor(temp_config)
+        except (ValueError, tk.TclError) as error:
+            self.file_count_label.configure(text="Check settings before scanning")
+            messagebox.showerror("Check settings", str(error))
+            return
         files = temp_processor.get_image_files(input_folder)
         
         if files:
             self.file_count_label.configure(text=f"Found {len(files)} supported files")
         else:
-            self.file_count_label.configure(text="No supported files found (PDF, JPG, PNG, BMP, TIFF)")
+            self.file_count_label.configure(text="No supported files found (JPG, PNG, WebP, BMP, TIFF; PDF requires PDF support)")
     
     def get_current_config(self) -> ProcessingConfig:
         """Get current configuration from GUI - optimized for web processing."""
@@ -549,8 +559,10 @@ class ImageProcessorGUI:
             
             # Web optimization settings
             long_edge_pixels=self.long_edge_var.get(),
-            output_dpi=300,
+            output_dpi=72,
             convert_to_srgb=True,
+            preserve_metadata=False,
+            metadata_policy="public",
             web_output_suffix=self.suffix_var.get(),
             create_subfolder=True,
             subfolder_name=self.subfolder_var.get(),
@@ -570,8 +582,14 @@ class ImageProcessorGUI:
         if self.is_processing:
             return
         
-        # Validate inputs
-        config = self.get_current_config()
+        # Validate inputs and fields before changing UI state.
+        try:
+            config = self.get_current_config()
+            config.validate()
+        except (ValueError, tk.TclError) as error:
+            self.progress_label.configure(text="Fix the highlighted settings before processing")
+            messagebox.showerror("Check settings", str(error))
+            return
         if not config.input_folder or not os.path.exists(config.input_folder):
             messagebox.showerror("Error", "Please select a valid input folder")
             return
@@ -587,7 +605,15 @@ class ImageProcessorGUI:
         self.progress_label.configure(text="Initializing...")
         
         # Start processing thread
-        self.processor = ImageProcessor(config)
+        try:
+            self.processor = ImageProcessor(config)
+        except Exception as error:
+            self.is_processing = False
+            self.process_btn.configure(state="normal")
+            self.stop_btn.configure(state="disabled")
+            self.progress_label.configure(text="Could not prepare processing")
+            messagebox.showerror("Could not start processing", str(error))
+            return
         self.processing_thread = threading.Thread(target=self.run_processing)
         self.processing_thread.daemon = True
         self.processing_thread.start()
@@ -767,21 +793,32 @@ class ImageProcessorGUI:
             self.scan_files()
     
     def load_settings(self):
-        """Load default settings from config file if it exists."""
-        config_path = "config/default_settings.yaml"
-        if os.path.exists(config_path):
+        """Load per-user settings, falling back to the bundled safe preset."""
+        user_path = self.user_settings_path()
+        bundled_path = Path(get_resource_path("config/default_settings.yaml"))
+        config_path = user_path if user_path.exists() else bundled_path
+        if config_path.exists():
             try:
-                config = ProcessingConfig.load_from_file(config_path)
+                config = ProcessingConfig.load_from_file(str(config_path))
                 self.apply_config(config)
             except Exception as e:
                 print(f"Failed to load default settings: {e}")
+
+    @staticmethod
+    def user_settings_path() -> Path:
+        if os.name == "nt":
+            root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        else:
+            root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+        return root / "MJWImageProcessor" / "settings.yaml"
     
     def save_default_settings(self):
-        """Save current settings as default."""
+        """Save current settings outside the repository/application bundle."""
         try:
-            os.makedirs("config", exist_ok=True)
+            config_path = self.user_settings_path()
+            config_path.parent.mkdir(parents=True, exist_ok=True)
             config = self.get_current_config()
-            config.save_to_file("config/default_settings.yaml")
+            config.save_to_file(str(config_path))
         except Exception as e:
             print(f"Failed to save default settings: {e}")
     
