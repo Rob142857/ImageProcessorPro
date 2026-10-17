@@ -479,6 +479,11 @@ def main():
         except Exception as e:
             logger.error(f"Failed to load configuration: {e}")
             return 1
+        # Folders given on the command line win over the profile's (often empty) folders.
+        if args.input:
+            config.input_folder = args.input
+        if args.output:
+            config.output_folder = args.output
     else:
         # Validate arguments first
         if not validate_args(args):

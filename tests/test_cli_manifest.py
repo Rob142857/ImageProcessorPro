@@ -94,3 +94,22 @@ class CliManifestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CliFolderWithProfileTests(unittest.TestCase):
+    def test_command_line_folders_override_profile_folders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            source_dir = base / "batch"
+            out_dir = base / "web"
+            source_dir.mkdir()
+            Image.new("RGB", (640, 400), "teal").save(source_dir / "art-one.jpg")
+            profile = Path(__file__).resolve().parents[1] / "config" / "mjw-web-v2.yaml"
+            argv = ["cli.py", "-i", str(source_dir), "-o", str(out_dir), "--config", str(profile), "--quiet"]
+            old_argv = sys.argv
+            sys.argv = argv
+            try:
+                self.assertEqual(cli.main(), 0)
+            finally:
+                sys.argv = old_argv
+            self.assertTrue((out_dir / "art-one_web.jpeg").exists())
