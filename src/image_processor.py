@@ -17,9 +17,9 @@ from loguru import logger
 from PIL import Image, ImageCms, ImageDraw, ImageFont, ImageOps
 
 try:
-    import fitz
+    import pymupdf
 except ImportError:  # PDF support is an explicit, separately licensed extra.
-    fitz = None
+    pymupdf = None
 
 
 Path("logs").mkdir(exist_ok=True)
@@ -515,14 +515,14 @@ class ImageProcessor:
             if os.path.exists(temporary): os.unlink(temporary)
 
     def _iter_pdf_pages(self, pdf_path: str) -> Iterator[Tuple[int, Image.Image]]:
-        if fitz is None:
+        if pymupdf is None:
             raise RuntimeError("PDF support is not installed; install ImageProcessorPro with the 'pdf' extra")
         path = Path(pdf_path)
         self._source_ok(path)
-        document = fitz.open(path)
+        document = pymupdf.open(path)
         try:
             if document.page_count > self.config.max_pdf_pages: raise ValueError("PDF page count exceeds configured limit")
-            matrix = fitz.Matrix(self.config.pdf_dpi / 72, self.config.pdf_dpi / 72)
+            matrix = pymupdf.Matrix(self.config.pdf_dpi / 72, self.config.pdf_dpi / 72)
             for number, page in enumerate(document, 1):
                 pixmap = page.get_pixmap(matrix=matrix, alpha=False)
                 if pixmap.width * pixmap.height > self.config.max_pixels: raise ValueError("PDF page exceeds pixel limit")
@@ -575,7 +575,7 @@ class ImageProcessor:
 
     def get_image_files(self, folder_path: str) -> List[str]:
         root_path = Path(folder_path); files: List[str] = []
-        supported = self.supported_formats if fitz is not None else self.supported_formats - {".pdf"}
+        supported = self.supported_formats if pymupdf is not None else self.supported_formats - {".pdf"}
         for root, dirs, names in os.walk(root_path):
             dirs[:] = [name for name in dirs if name.lower() != self.config.subfolder_name.lower()]
             for name in names:

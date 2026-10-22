@@ -113,7 +113,7 @@ ImageProcessorMJWProject/
 - **Pillow (PIL) 11.3.0** - Advanced image processing
 - **OpenCV 4.12.0** - Computer vision operations
 - **PyMuPDF 1.26.3** - PDF processing
-- **CustomTkinter 5.2.2** - Modern GUI framework
+- **CustomTkinter 6.0.0** - Modern GUI framework
 - **Flask 3.1.1** - HTTP API server
 - **Azure SDK** - Cloud integration
 - **NumPy 2.2.6** - Numerical operations
